@@ -1,34 +1,40 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
+// src/App.jsx
 import './App.css'
 
 function App() {
-  const [count, setCount] = useState(0)
-
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.jsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
+    <div className="app">
+      {/* LEFT MENU */}
+      <aside className="sidebar">
+        <div className="menu-title">Menu</div>
+
+        <nav className="menu-list">
+          <button className="menu-item active">About &amp; Expertise</button>
+          <button className="menu-item">Contact</button>
+          <button className="menu-item">Working Experience</button>
+          <button className="menu-item">Education</button>
+          <button className="menu-item">Projects</button>
+        </nav>
+      </aside>
+
+      {/* MAIN CONTENT */}
+      <main className="content">
+        {/* TOP BANNER */}
+        <section className="header-banner">
+          <h1 className="name-title">Cosmological Perturbations Analysis</h1>
+        </section>
+
+        {/* ABOUT ME */}
+        <section className="section">
+          <h2 className="section-title">Stamou Ioanna</h2>
+          <p className="section-text">
+           This is an application that allows you to analyze cosmological perturbations. It is now under construction.
+          </p>
+        </section>
+
+
+      </main>
+    </div>
   )
 }
 
