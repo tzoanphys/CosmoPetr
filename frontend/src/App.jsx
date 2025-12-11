@@ -335,17 +335,15 @@ function App() {
           textAlign: "center", 
           marginTop: "auto", 
           paddingTop: "40px",
-          color: "#8af9dd",
-          fontSize: "14px",
-          opacity: 0.8
+          fontSize: "18px"
         }}>
-          Created By{" "}
+          <span style={{ color: "#00F5C4" }}>Created By{" "}</span>
           <a 
             href="https://ioanna-stamou.com/" 
             target="_blank" 
             rel="noopener noreferrer"
             style={{
-              color: "#00ffc3",
+              color: "#00F5C4",
               textDecoration: "none",
               transition: "opacity 0.2s ease"
             }}
