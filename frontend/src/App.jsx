@@ -328,7 +328,7 @@ function App() {
           <h1 className="name-title">Cosmological Perturbations</h1>
           <p className="header-subtitle">
             Define your multi-field inflation model and initial conditions. This app 
-            wiil give you the power spectra and observables.
+            will give you the power spectra.
           </p>
         </section>
 
@@ -352,6 +352,46 @@ function App() {
                 browser.
               </li>
             </ol>
+
+            {/* Notes of cosmological fluctuations */}
+            <div style={{ 
+              marginTop: '30px', 
+              padding: '20px', 
+              backgroundColor: '#0a0a0a', 
+              borderRadius: '4px', 
+              border: '1px solid rgba(0, 191, 166, 0.3)', 
+              maxWidth: '95%' 
+            }}>
+              <strong style={{ 
+                color: '#00ffc3', 
+                display: 'block', 
+                marginBottom: '12px', 
+                fontSize: '16px' 
+              }}>
+                Notes of cosmological fluctuations
+              </strong>
+              <p style={{ 
+                color: '#e8fff7', 
+                margin: '0 0 12px 0',
+                fontSize: '14px'
+              }}>
+                Access the detailed notes on cosmological fluctuations:
+              </p>
+              <a 
+                href="/fluctuatiions.pdf" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                style={{ 
+                  color: '#00ffc3', 
+                  textDecoration: 'underline',
+                  fontSize: '14px',
+                  display: 'inline-block',
+                  marginTop: '8px'
+                }}
+              >
+                Open PDF →
+              </a>
+            </div>
           </section>
         )}
 
@@ -452,8 +492,23 @@ function App() {
               </div>
             )}
 
-            {/* Next button */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '30px' }}>
+            {/* Navigation buttons */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '30px' }}>
+              <button 
+                className="primary-button" 
+                onClick={() => setActivePage("about")}
+                style={{ 
+                  backgroundColor: 'transparent',
+                  color: '#00ffc3',
+                  fontWeight: 'bold',
+                  padding: '12px 24px',
+                  fontSize: '16px',
+                  border: '1px solid rgba(0, 191, 166, 0.5)',
+                  cursor: 'pointer'
+                }}
+              >
+                ← Back
+              </button>
               <button 
                 className="primary-button" 
                 onClick={() => setActivePage("initial")}
@@ -531,8 +586,23 @@ function App() {
               ))}
             </div>
 
-            {/* Next button */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '30px' }}>
+            {/* Navigation buttons */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '30px' }}>
+              <button 
+                className="primary-button" 
+                onClick={() => setActivePage("model")}
+                style={{ 
+                  backgroundColor: 'transparent',
+                  color: '#00ffc3',
+                  fontWeight: 'bold',
+                  padding: '12px 24px',
+                  fontSize: '16px',
+                  border: '1px solid rgba(0, 191, 166, 0.5)',
+                  cursor: 'pointer'
+                }}
+              >
+                ← Back
+              </button>
               <button 
                 className="primary-button" 
                 onClick={() => setActivePage("summary")}
@@ -559,12 +629,22 @@ function App() {
               the backend solver.
             </p>
 
-            {/* Show all data in JSON format */}
-            <pre className="summary-block">
+            {/* Show all data in JSON format (potential excluded to avoid duplication) */}
+            <div style={{ marginTop: '16px', padding: '20px', backgroundColor: '#0a0a0a', borderRadius: '4px', border: '1px solid rgba(0, 191, 166, 0.3)', maxWidth: '95%' }}>
+              <strong style={{ color: '#00ffc3', display: 'block', marginBottom: '12px', fontSize: '16px' }}>Configuration Summary:</strong>
+              <pre style={{ 
+                color: '#91fff3', 
+                margin: 0, 
+                fontSize: '12px',
+                fontFamily: 'monospace',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                maxHeight: '200px',
+                overflow: 'auto'
+              }}>
 {JSON.stringify(
   {
     numFields: numFields,
-    potential: potential,
     numParameters: numParameters,
     parameters: parameters,
     initialTime: initialTime,
@@ -574,14 +654,47 @@ function App() {
   null,
   2
 )}
-            </pre>
+              </pre>
+            </div>
+            
+            {/* Show potential separately if it exists */}
+            {potential && potential.trim() !== "" && (
+              <div style={{ marginTop: '20px', padding: '20px', backgroundColor: '#0a0a0a', borderRadius: '4px', border: '1px solid rgba(0, 191, 166, 0.3)', maxWidth: '95%' }}>
+                <strong style={{ color: '#00ffc3', display: 'block', marginBottom: '12px', fontSize: '16px' }}>Potential Expression:</strong>
+                <pre style={{ 
+                  color: '#91fff3', 
+                  margin: 0, 
+                  fontSize: '12px',
+                  fontFamily: 'monospace',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word'
+                }}>
+                  {potential}
+                </pre>
+              </div>
+            )}
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '20px' }}>
+              <button 
+                className="primary-button" 
+                onClick={() => setActivePage("initial")}
+                style={{ 
+                  backgroundColor: 'transparent',
+                  color: '#00ffc3',
+                  fontWeight: 'bold',
+                  padding: '12px 24px',
+                  fontSize: '16px',
+                  border: '1px solid rgba(0, 191, 166, 0.5)',
+                  cursor: 'pointer'
+                }}
+              >
+                ← Back
+              </button>
               <button 
                 className="primary-button" 
                 onClick={handleRunCalculation}
                 disabled={isCalculating}
-                style={{ 
+                style={{
                   backgroundColor: isCalculating ? '#ccc' : '#4CAF50',
                   cursor: isCalculating ? 'not-allowed' : 'pointer'
                 }}
@@ -602,41 +715,89 @@ function App() {
             )}
             
             {calculationResult && (
-              <div className="summary-block" style={{ marginTop: '20px' }}>
+              <div className="summary-block" style={{ 
+                marginTop: '30px',
+                width: '100%',
+                maxWidth: '98%',
+                padding: '40px',
+                minHeight: '600px'
+              }}>
                 <h3 style={{ 
                   marginTop: '0', 
-                  marginBottom: '12px',
+                  marginBottom: '20px',
                   color: calculationResult.success ? '#00ffc3' : '#ff4444',
-                  fontSize: '18px'
+                  fontSize: '28px'
                 }}>
                   {calculationResult.success ? '✓' : '✗'} Calculation Result
                 </h3>
                 
-                <p style={{ marginBottom: '8px', color: '#e8fff7' }}>
+                <p style={{ marginBottom: '12px', color: '#e8fff7', fontSize: '15px' }}>
                   <strong>Status:</strong> <span style={{ color: calculationResult.success ? '#00ffc3' : '#ff4444' }}>
                     {calculationResult.success ? 'Success' : 'Failed'}
                   </span>
                 </p>
                 
-                <p style={{ marginBottom: '8px', color: '#e8fff7' }}>
+                <p style={{ marginBottom: '12px', color: '#e8fff7', fontSize: '15px' }}>
                   <strong>Message:</strong> {calculationResult.message}
                 </p>
                 
                 {calculationResult.executionId && (
-                  <p style={{ marginBottom: '8px', fontSize: '12px', color: '#91fff3', opacity: 0.7 }}>
+                  <p style={{ marginBottom: '12px', fontSize: '13px', color: '#91fff3', opacity: 0.7 }}>
                     <strong>Execution ID:</strong> {calculationResult.executionId.substring(0, 8)}...
                   </p>
                 )}
                 
                 {calculationResult.success && calculationResult.outputFiles && calculationResult.outputFiles.length > 0 && (
-                  <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid rgba(0, 191, 166, 0.3)' }}>
-                    <strong style={{ color: '#00ffc3' }}>Output Files ({calculationResult.outputFiles.length}):</strong>
-                    <ul style={{ marginTop: '6px', marginBottom: '0', paddingLeft: '20px', color: '#e8fff7', fontSize: '13px' }}>
-                      {calculationResult.outputFiles.map((file, idx) => (
-                        <li key={idx} style={{ marginBottom: '4px' }}>
-                          {file}
-                        </li>
-                      ))}
+                  <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid rgba(0, 191, 166, 0.3)' }}>
+                    <strong style={{ color: '#00ffc3', fontSize: '16px' }}>Output Files ({calculationResult.outputFiles.length}):</strong>
+                    <ul style={{ marginTop: '10px', marginBottom: '0', paddingLeft: '20px', color: '#e8fff7', fontSize: '14px' }}>
+                      {calculationResult.outputFiles.map((file, idx) => {
+                        const isImage = file.toLowerCase().endsWith('.png') || file.toLowerCase().endsWith('.jpg') || file.toLowerCase().endsWith('.jpeg');
+                        const fileUrl = `/api/cosmo-perturbations/files/${encodeURIComponent(file)}`;
+                        
+                        return (
+                          <li key={idx} style={{ marginBottom: '8px' }}>
+                            {isImage ? (
+                              <div style={{ 
+                                width: '100%', 
+                                maxWidth: '600px',
+                                marginTop: '20px',
+                                marginBottom: '20px'
+                              }}>
+                                <img 
+                                  src={fileUrl} 
+                                  alt={file}
+                                  style={{
+                                    width: '100%',
+                                    height: 'auto',
+                                    maxHeight: '400px',
+                                    border: '1px solid rgba(0, 191, 166, 0.3)',
+                                    borderRadius: '4px',
+                                    backgroundColor: '#ffffff',
+                                    boxShadow: '0 2px 8px rgba(0, 191, 166, 0.2)',
+                                    display: 'block',
+                                    cursor: 'pointer'
+                                  }}
+                                  onClick={() => window.open(fileUrl, '_blank')}
+                                  onError={(e) => {
+                                    e.target.style.display = 'none';
+                                    console.error('Failed to load image:', fileUrl);
+                                  }}
+                                />
+                              </div>
+                            ) : (
+                              <a 
+                                href={fileUrl} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                style={{ color: '#00ffc3', textDecoration: 'underline' }}
+                              >
+                                {file}
+                              </a>
+                            )}
+                          </li>
+                        );
+                      })}
                     </ul>
                   </div>
                 )}
@@ -655,7 +816,7 @@ function App() {
                       color: '#91fff3',
                       padding: '12px', 
                       overflow: 'auto', 
-                      maxHeight: '200px',
+                      maxHeight: '400px',
                       borderRadius: '4px',
                       marginTop: '8px',
                       fontSize: '11px',
@@ -669,8 +830,8 @@ function App() {
               </div>
             )}
             <p className="hint-text">
-              Later, this button will send the data to your Fortran backend and
-              show power spectra / observables here.
+              Right now it works only the 1 field scenario without change of metric. Potetential should be write with parameters. 
+              Later these issues will be fixed. 
             </p>
           </section>
         )}

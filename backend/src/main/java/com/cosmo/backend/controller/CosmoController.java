@@ -3,9 +3,18 @@ package com.cosmo.backend.controller;
 import com.cosmo.backend.dto.InitialConditionsDTO;
 import com.cosmo.backend.service.FortranExecutionService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 
 //Logging API (prints to conslole/logs in a structures way)
 import org.slf4j.Logger;
@@ -135,6 +144,77 @@ public class CosmoController {
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body("Error checking executable: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Serve output files (plots, data files) from the fortran directory
+     * GET /api/cosmo-perturbations/files/{filename}
+     * 
+     * @param filename Name of the file to serve
+     * @return File resource or 404 if not found
+     */
+    @GetMapping("/files/{filename:.+}")
+    public ResponseEntity<Resource> getFile(@PathVariable String filename) {
+        try {
+            // Get fortran directory (same logic as in FortranExecutionService)
+            Path currentDir = Paths.get("").toAbsolutePath();
+            Path fortranDir = null;
+            
+            // Try multiple possible locations
+            List<Path> possiblePaths = new ArrayList<>();
+            possiblePaths.add(currentDir.resolve("../fortran").normalize());
+            possiblePaths.add(currentDir.resolve("fortran"));
+            if (currentDir.toString().endsWith("backend")) {
+                possiblePaths.add(currentDir.getParent().resolve("fortran"));
+            }
+            
+            for (Path path : possiblePaths) {
+                if (Files.exists(path) && Files.isDirectory(path)) {
+                    fortranDir = path;
+                    break;
+                }
+            }
+            
+            if (fortranDir == null) {
+                fortranDir = possiblePaths.get(0);
+            }
+            
+            Path filePath = fortranDir.resolve(filename).normalize();
+            
+            // Security check: ensure file is within fortran directory
+            if (!filePath.startsWith(fortranDir.normalize())) {
+                logger.warn("Attempted path traversal attack: {}", filename);
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+            }
+            
+            if (!Files.exists(filePath) || !Files.isRegularFile(filePath)) {
+                logger.warn("File not found: {}", filePath);
+                return ResponseEntity.notFound().build();
+            }
+            
+            Resource resource = new FileSystemResource(filePath.toFile());
+            
+            // Determine content type
+            String contentType = Files.probeContentType(filePath);
+            if (contentType == null) {
+                if (filename.toLowerCase().endsWith(".png")) {
+                    contentType = MediaType.IMAGE_PNG_VALUE;
+                } else if (filename.toLowerCase().endsWith(".txt")) {
+                    contentType = MediaType.TEXT_PLAIN_VALUE;
+                } else {
+                    contentType = MediaType.APPLICATION_OCTET_STREAM_VALUE;
+                }
+            }
+            
+            return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(contentType))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + filename + "\"")
+                .body(resource);
+                
+        } catch (Exception e) {
+            logger.error("Error serving file {}: ", filename, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
 }

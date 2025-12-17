@@ -548,6 +548,9 @@ public class FortranExecutionService {
             
             logger.info("Using fortran directory: {}", fortranDir);
             
+            // Step 1.5: Clean up previous plot files
+            cleanupOldPlots(fortranDir);
+            
             // Step 2: Write potential.inc file
             String potentialExpression = initialConditions.getPotentialExpression();
             writePotentialInc(fortranDir, potentialExpression);
@@ -619,6 +622,20 @@ public class FortranExecutionService {
             // The Fortran program writes various output files to the fortran directory
             List<String> outputFiles = collectOutputFiles(fortranDir);
             
+            // Step 8: Generate plot if calculation was successful
+            if (exitCode == 0) {
+                try {
+                    String plotFile = generatePlot(fortranDir, executionId);
+                    if (plotFile != null) {
+                        outputFiles.add(plotFile);
+                        logger.info("✅ Generated plot: {}", plotFile);
+                    }
+                } catch (Exception e) {
+                    logger.warn("Failed to generate plot: {}", e.getMessage());
+                    // Don't fail the entire execution if plotting fails
+                }
+            }
+            
             if (exitCode == 0) {
                 String successMessage = String.format(
                     "Calculation completed successfully! Generated %d output file(s). Execution ID: %s",
@@ -681,6 +698,142 @@ public class FortranExecutionService {
     }
     
     /**
+     * Clean up previous plot files from the fortran directory
+     * Deletes all files matching the pattern n_prz_kmode_plot_*.png
+     * 
+     * @param fortranDir The directory containing the plot files
+     */
+    private void cleanupOldPlots(Path fortranDir) {
+        try {
+            // Find all plot files matching the pattern
+            try (java.util.stream.Stream<Path> stream = Files.list(fortranDir)) {
+                long deletedCount = stream
+                    .filter(Files::isRegularFile)
+                    .filter(path -> {
+                        String filename = path.getFileName().toString();
+                        return filename.startsWith("n_prz_kmode_plot_") && filename.endsWith(".png");
+                    })
+                    .peek(path -> {
+                        try {
+                            Files.delete(path);
+                            logger.info("🗑️  Deleted old plot file: {}", path.getFileName());
+                        } catch (IOException e) {
+                            logger.warn("Failed to delete old plot file {}: {}", path.getFileName(), e.getMessage());
+                        }
+                    })
+                    .count();
+                
+                if (deletedCount > 0) {
+                    logger.info("Cleaned up {} old plot file(s)", deletedCount);
+                }
+            }
+        } catch (IOException e) {
+            logger.warn("Error cleaning up old plots: {}", e.getMessage());
+            // Don't fail the execution if cleanup fails
+        }
+    }
+    
+    /**
+     * Generate plot from n_prz_kmode.txt using Python script
+     * Creates a log-scale plot and saves it as PNG
+     * 
+     * @param fortranDir The directory containing the data file and plot script
+     * @param executionId Execution ID for unique plot filename
+     * @return Name of the generated plot file, or null if generation failed
+     * @throws IOException If plot generation fails
+     * @throws InterruptedException If plot generation is interrupted
+     */
+    private String generatePlot(Path fortranDir, String executionId) throws IOException, InterruptedException {
+        Path dataFile = fortranDir.resolve("n_prz_kmode.txt");
+        Path plotScript = fortranDir.resolve("plot_results.py");
+        String plotFileName = "n_prz_kmode_plot_" + executionId.substring(0, 8) + ".png";
+        Path plotFile = fortranDir.resolve(plotFileName);
+        
+        // Check if data file exists
+        if (!Files.exists(dataFile)) {
+            logger.warn("Data file not found for plotting: {}", dataFile);
+            return null;
+        }
+        
+        // Check if plot script exists
+        if (!Files.exists(plotScript)) {
+            logger.warn("Plot script not found: {}", plotScript);
+            return null;
+        }
+        
+        logger.info("Generating plot from {} -> {}", dataFile, plotFile);
+        
+        // Run Python script to generate plot
+        ProcessBuilder plotBuilder = new ProcessBuilder(
+            "python3",
+            plotScript.toString(),
+            dataFile.toString(),
+            plotFile.toString()
+        );
+        
+        // Try python if python3 doesn't work
+        plotBuilder.directory(fortranDir.toFile());
+        plotBuilder.redirectErrorStream(true);
+        
+        try {
+            Process plotProcess = plotBuilder.start();
+            
+            // Read output
+            StringBuilder plotOutput = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(plotProcess.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    plotOutput.append(line).append("\n");
+                    logger.debug("Plot output: {}", line);
+                }
+            }
+            
+            int plotExitCode = plotProcess.waitFor();
+            
+            if (plotExitCode == 0 && Files.exists(plotFile) && Files.size(plotFile) > 0) {
+                logger.info("✅ Plot generated successfully: {}", plotFileName);
+                return plotFileName;
+            } else {
+                // Try with 'python' instead of 'python3'
+                logger.info("Trying with 'python' instead of 'python3'");
+                plotBuilder = new ProcessBuilder(
+                    "python",
+                    plotScript.toString(),
+                    dataFile.toString(),
+                    plotFile.toString()
+                );
+                plotBuilder.directory(fortranDir.toFile());
+                plotBuilder.redirectErrorStream(true);
+                
+                plotProcess = plotBuilder.start();
+                plotOutput = new StringBuilder();
+                try (BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(plotProcess.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        plotOutput.append(line).append("\n");
+                    }
+                }
+                
+                plotExitCode = plotProcess.waitFor();
+                
+                if (plotExitCode == 0 && Files.exists(plotFile) && Files.size(plotFile) > 0) {
+                    logger.info("✅ Plot generated successfully: {}", plotFileName);
+                    return plotFileName;
+                } else {
+                    logger.warn("Plot generation failed. Exit code: {}, Output: {}", 
+                        plotExitCode, plotOutput.toString());
+                    return null;
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Error generating plot: ", e);
+            return null;
+        }
+    }
+    
+    /**
      * Collect output files from the fortran directory
      * The Fortran program generates various .txt files with results
      * 
@@ -722,11 +875,14 @@ public class FortranExecutionService {
             }
         }
         
-        // Also collect any other .txt files that might have been created
+        // Also collect any other .txt and .png files that might have been created
         try {
             Files.walk(fortranDir, 1) // Only check current directory, not subdirectories
                 .filter(Files::isRegularFile)
-                .filter(path -> path.toString().endsWith(".txt"))
+                .filter(path -> {
+                    String fileName = path.toString().toLowerCase();
+                    return fileName.endsWith(".txt") || fileName.endsWith(".png");
+                })
                 .forEach(path -> {
                     String fileName = fortranDir.relativize(path).toString();
                     if (!files.contains(fileName)) {
