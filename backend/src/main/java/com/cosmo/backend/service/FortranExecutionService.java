@@ -11,7 +11,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import java.util.regex.Matcher;
@@ -36,6 +38,12 @@ public class FortranExecutionService {
      * Maximum execution time in seconds (10 minutes)
      */
     private static final long MAX_EXECUTION_TIME = 600;
+    
+    /**
+     * Map to track running processes by execution ID
+     * Used for cancellation support
+     */
+    private final Map<String, Process> runningProcesses = new ConcurrentHashMap<>();
     
     /**
      * Get the absolute path to the fortran directory
@@ -73,6 +81,46 @@ public class FortranExecutionService {
         // Return the first path even if it doesn't exist (for error message)
         logger.warn("Fortran directory not found, using: {}", possiblePaths.get(0));
         return possiblePaths.get(0);
+    }
+    
+    /**
+     * Replace parameter symbols in expression with their values
+     * Handles case-insensitive matching (e.g., "A" in map matches "a" in expression)
+     * 
+     * @param expression The potential expression with parameter symbols
+     * @param parameterValues Map of parameter names to values
+     * @return Expression with parameters replaced by values
+     */
+    private String replaceParameters(String expression, Map<String, Double> parameterValues) {
+        if (expression == null || expression.trim().isEmpty()) {
+            return expression;
+        }
+        
+        if (parameterValues == null || parameterValues.isEmpty()) {
+            return expression;
+        }
+        
+        String result = expression;
+        
+        // Replace each parameter with its value
+        // Sort by length (longest first) to avoid partial replacements (e.g., "lambda" before "lam")
+        List<String> sortedParams = new ArrayList<>(parameterValues.keySet());
+        sortedParams.sort((a, b) -> Integer.compare(b.length(), a.length()));
+        
+        for (String paramName : sortedParams) {
+            Double value = parameterValues.get(paramName);
+            if (value != null) {
+                // Use word boundaries to match whole parameter names only
+                // Case-insensitive replacement - matches "A", "a", "Aa", etc.
+                String pattern = "\\b" + Pattern.quote(paramName) + "\\b";
+                String replacement = String.format("%.15f", value);
+                result = result.replaceAll("(?i)" + pattern, replacement);
+                logger.info("Replaced parameter '{}' (case-insensitive) with value {}", paramName, value);
+            }
+        }
+        
+        logger.info("Expression after parameter replacement: {}", result);
+        return result;
     }
     
     /**
@@ -345,7 +393,7 @@ public class FortranExecutionService {
             writer.newLine(); // Add blank line at end
         }
         
-        logger.info("Successfully wrote initial_conditions.inc");
+        logger.info("✅Successfully wrote initial_conditions.inc");
     }
     
     /**
@@ -551,19 +599,28 @@ public class FortranExecutionService {
             // Step 1.5: Clean up previous plot files
             cleanupOldPlots(fortranDir);
             
-            // Step 2: Write potential.inc file
+            // Step 2: Replace parameters in potential expression
             String potentialExpression = initialConditions.getPotentialExpression();
+            Map<String, Double> parameterValues = initialConditions.getParameterValues();
+            
+            if (parameterValues != null && !parameterValues.isEmpty()) {
+                logger.info("Replacing parameters in potential expression...");
+                potentialExpression = replaceParameters(potentialExpression, parameterValues);
+                logger.info("Potential expression after parameter replacement: {}", potentialExpression);
+            }
+            
+            // Step 3: Write potential.inc file
             writePotentialInc(fortranDir, potentialExpression);
             
-            // Step 3: Write initial_conditions.inc file
+            // Step 4: Write initial_conditions.inc file
             writeInitialConditionsInc(fortranDir, initialConditions);
             
-            // Step 4: Determine number of fields from initial conditions
+            // Step 5: Determine number of fields from initial conditions
             int numFields = initialConditions.getFieldValues() != null ? 
                 initialConditions.getFieldValues().size() : 1;
             logger.info("Number of fields (nf): {}", numFields);
             
-            // Step 5: Compile multifix.f with correct nf value
+            // Step 6: Compile multifix.f with correct nf value
             Path executable;
             try {
                 executable = compileFortranProgram(fortranDir, numFields);
@@ -578,7 +635,7 @@ public class FortranExecutionService {
                 );
             }
             
-            // Step 6: Run the compiled executable
+            // Step 7: Run the compiled executable
             // The Fortran program runs without command-line arguments
             // It reads from potential.inc and initial_conditions.inc at compile time
             ProcessBuilder processBuilder = new ProcessBuilder(
@@ -591,75 +648,95 @@ public class FortranExecutionService {
             logger.info("Executing: {}", executable);
             Process process = processBuilder.start();
             
-            // Read output from the Fortran program
-            StringBuilder output = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    output.append(line).append("\n");
-                    logger.debug("Fortran output: {}", line);
-                }
-            }
+            // Store process for cancellation support
+            runningProcesses.put(executionId, process);
             
-            // Wait for process with timeout
-            boolean finished = process.waitFor(MAX_EXECUTION_TIME, TimeUnit.SECONDS);
-            
-            if (!finished) {
-                process.destroyForcibly();
-                return new FortranExecutionResult(
-                    executionId,
-                    false,
-                    "Execution timeout after " + MAX_EXECUTION_TIME + " seconds",
-                    output.toString(),
-                    null
-                );
-            }
-            
-            int exitCode = process.exitValue();
-            
-            // Step 7: Collect output files
-            // The Fortran program writes various output files to the fortran directory
-            List<String> outputFiles = collectOutputFiles(fortranDir);
-            
-            // Step 8: Generate plot if calculation was successful
-            if (exitCode == 0) {
-                try {
-                    String plotFile = generatePlot(fortranDir, executionId);
-                    if (plotFile != null) {
-                        outputFiles.add(plotFile);
-                        logger.info("✅ Generated plot: {}", plotFile);
+            try {
+                // Read output from the Fortran program
+                logger.info("========================================");
+                logger.info("Fortran program output (multifix.exe):");
+                logger.info("========================================");
+                StringBuilder output = new StringBuilder();
+                try (BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(process.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        // Check if process was cancelled
+                        if (!process.isAlive()) {
+                            break;
+                        }
+                        output.append(line).append("\n");
+                        // Log at INFO level so developers can see the output in terminal
+                        logger.info("multifix.exe: {}", line);
                     }
-                } catch (Exception e) {
-                    logger.warn("Failed to generate plot: {}", e.getMessage());
-                    // Don't fail the entire execution if plotting fails
                 }
-            }
-            
-            if (exitCode == 0) {
-                String successMessage = String.format(
-                    "Calculation completed successfully! Generated %d output file(s). Execution ID: %s",
-                    outputFiles.size(),
-                    executionId.substring(0, 8) + "..."
-                );
-                logger.info("✅ {}", successMessage);
-                return new FortranExecutionResult(
-                    executionId,
-                    true,
-                    successMessage,
-                    output.toString(),
-                    outputFiles
-                );
-            } else {
-                String errorMsg = "Fortran program exited with error code " + exitCode + ". Check output for details.";
-                logger.error("❌ {}", errorMsg);
-                return new FortranExecutionResult(
-                    executionId,
-                    false,
-                    errorMsg,
-                    output.toString(),
-                    outputFiles
-                );
+                logger.info("========================================");
+                logger.info("End of Fortran program output");
+                logger.info("========================================");
+                
+                // Wait for process with timeout
+                boolean finished = process.waitFor(MAX_EXECUTION_TIME, TimeUnit.SECONDS);
+                
+                if (!finished) {
+                    process.destroyForcibly();
+                    return new FortranExecutionResult(
+                        executionId,
+                        false,
+                        "Execution timeout after " + MAX_EXECUTION_TIME + " seconds",
+                        output.toString(),
+                        null
+                    );
+                }
+                
+                int exitCode = process.exitValue();
+                
+                // Step 8: Collect output files
+                // The Fortran program writes various output files to the fortran directory
+                List<String> outputFiles = collectOutputFiles(fortranDir);
+                
+                // Step 9: Generate plot if calculation was successful
+                if (exitCode == 0) {
+                    try {
+                        String plotFile = generatePlot(fortranDir, executionId);
+                        if (plotFile != null) {
+                            outputFiles.add(plotFile);
+                            logger.info("✅ Generated plot: {}", plotFile);
+                        }
+                    } catch (Exception e) {
+                        logger.warn("Failed to generate plot: {}", e.getMessage());
+                        // Don't fail the entire execution if plotting fails
+                    }
+                }
+                
+                if (exitCode == 0) {
+                    String successMessage = String.format(
+                        "Calculation completed successfully! Generated %d output file(s). Execution ID: %s",
+                        outputFiles.size(),
+                        executionId.substring(0, 8) + "..."
+                    );
+                    logger.info("✅ {}", successMessage);
+                    return new FortranExecutionResult(
+                        executionId,
+                        true,
+                        successMessage,
+                        output.toString(),
+                        outputFiles
+                    );
+                } else {
+                    String errorMsg = "Fortran program exited with error code " + exitCode + ". Check output for details.";
+                    logger.error("❌ {}", errorMsg);
+                    return new FortranExecutionResult(
+                        executionId,
+                        false,
+                        errorMsg,
+                        output.toString(),
+                        outputFiles
+                    );
+                }
+            } finally {
+                // Always remove process from tracking map when done
+                runningProcesses.remove(executionId);
+                logger.debug("Removed execution {} from tracking map", executionId);
             }
             
         } catch (IOException e) {
@@ -674,6 +751,11 @@ public class FortranExecutionService {
         } catch (InterruptedException e) {
             logger.error("Interrupted while executing Fortran: ", e);
             Thread.currentThread().interrupt();
+            // Clean up process if still running
+            Process process = runningProcesses.remove(executionId);
+            if (process != null && process.isAlive()) {
+                process.destroyForcibly();
+            }
             return new FortranExecutionResult(
                 executionId,
                 false,
@@ -682,6 +764,11 @@ public class FortranExecutionService {
                 null
             );
         } catch (Exception e) {
+            // Clean up process if still running
+            Process process = runningProcesses.remove(executionId);
+            if (process != null && process.isAlive()) {
+                process.destroyForcibly();
+            }
             logger.error("Unexpected error executing Fortran: ", e);
             String errorDetails = e.getClass().getSimpleName() + ": " + e.getMessage();
             if (e.getCause() != null) {
@@ -695,6 +782,52 @@ public class FortranExecutionService {
                 null
             );
         }
+    }
+    
+    /**
+     * Cancel a running Fortran execution by execution ID
+     * 
+     * @param executionId The execution ID to cancel
+     * @return true if the execution was found and cancelled, false otherwise
+     */
+    public boolean cancelExecution(String executionId) {
+        if (executionId == null || executionId.trim().isEmpty()) {
+            logger.warn("Attempted to cancel execution with null or empty execution ID");
+            return false;
+        }
+        
+        Process process = runningProcesses.get(executionId);
+        if (process == null) {
+            logger.warn("Execution {} not found in running processes", executionId);
+            return false;
+        }
+        
+        if (!process.isAlive()) {
+            logger.info("Execution {} already finished", executionId);
+            runningProcesses.remove(executionId);
+            return false;
+        }
+        
+        logger.info("Cancelling execution {}", executionId);
+        process.destroyForcibly();
+        runningProcesses.remove(executionId);
+        logger.info("Successfully cancelled execution {}", executionId);
+        return true;
+    }
+    
+    /**
+     * Check if an execution is currently running
+     * 
+     * @param executionId The execution ID to check
+     * @return true if the execution is running, false otherwise
+     */
+    public boolean isExecutionRunning(String executionId) {
+        if (executionId == null || executionId.trim().isEmpty()) {
+            return false;
+        }
+        
+        Process process = runningProcesses.get(executionId);
+        return process != null && process.isAlive();
     }
     
     /**
@@ -856,14 +989,9 @@ public class FortranExecutionService {
             "fields.txt",
             "n_epsilon_hubble.txt",
             "kmode.txt",
-            "bardeen_initial.txt",
             "n_prz_kmode.txt",
-            "m_o_k_ps.txt",
-            "m_o_k_pt.txt",
             "prslow.txt",
-            "gw2.txt",
-            "epsilon.txt",
-            "n_ps_kmode.txt"
+            "gw2.txt"
         };
         
         // Check which expected files exist
@@ -873,26 +1001,6 @@ public class FortranExecutionService {
                 files.add(fileName);
                 logger.debug("Found output file: {}", fileName);
             }
-        }
-        
-        // Also collect any other .txt and .png files that might have been created
-        try {
-            Files.walk(fortranDir, 1) // Only check current directory, not subdirectories
-                .filter(Files::isRegularFile)
-                .filter(path -> {
-                    String fileName = path.toString().toLowerCase();
-                    return fileName.endsWith(".txt") || fileName.endsWith(".png");
-                })
-                .forEach(path -> {
-                    String fileName = fortranDir.relativize(path).toString();
-                    if (!files.contains(fileName)) {
-                        files.add(fileName);
-                        logger.debug("Found additional output file: {}", fileName);
-                    }
-                });
-        } catch (IOException e) {
-            logger.error("Error collecting output files: ", e);
-            throw e;
         }
         
         logger.info("Collected {} output file(s)", files.size());

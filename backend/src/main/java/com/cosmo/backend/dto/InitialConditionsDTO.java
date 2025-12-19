@@ -1,6 +1,7 @@
 package com.cosmo.backend.dto;
 
 import java.util.List;
+import java.util.Map;
 
 //Data Transfer Object for initial conditions
 //Used to receive data from frontend
@@ -32,6 +33,8 @@ public class InitialConditionsDTO {
     //potential parameters:
     private List<Double> potentialParameters;
 
+    //Parameter values mapped by name (e.g., {"m": 0.1, "lambda": 0.5})
+    private Map<String, Double> parameterValues;
 
     //Potential expression
     private String potentialExpression;
@@ -119,5 +122,13 @@ public class InitialConditionsDTO {
 
     public void setPotentialExpression(String potentialExpression) {
         this.potentialExpression = potentialExpression;
+    }
+
+    public Map<String, Double> getParameterValues() {
+        return parameterValues;
+    }
+
+    public void setParameterValues(Map<String, Double> parameterValues) {
+        this.parameterValues = parameterValues;
     }
 }

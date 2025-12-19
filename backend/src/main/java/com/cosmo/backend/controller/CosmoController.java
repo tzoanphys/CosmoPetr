@@ -15,6 +15,11 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.HashSet;
+import java.util.regex.Pattern;
+import java.util.regex.Matcher;
 
 //Logging API (prints to conslole/logs in a structures way)
 import org.slf4j.Logger;
@@ -77,6 +82,21 @@ public class CosmoController {
                 return ResponseEntity.badRequest().build();
             }
             
+            // Validate parameters in potential expression
+            String potentialExpression = initialConditions.getPotentialExpression();
+            if (potentialExpression != null && !potentialExpression.trim().isEmpty()) {
+                List<String> missingParams = validatePotentialParameters(
+                    potentialExpression, 
+                    initialConditions.getParameterValues()
+                );
+                
+                if (!missingParams.isEmpty()) {
+                    String errorMsg = "Missing parameter values for: " + String.join(", ", missingParams);
+                    logger.warn("Validation failed: {}", errorMsg);
+                    return ResponseEntity.badRequest().build();
+                }
+            }
+            
             // We passed validation, so now we try running Fortran.
             logger.info("Input validated. 🚀 Executing Fortran program...");
             
@@ -105,6 +125,41 @@ public class CosmoController {
                     null
                 );
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResult);
+        }
+    }
+    
+    /**
+     * Cancel a running Fortran execution
+     * POST /api/cosmo-perturbations/cancel/{executionId}
+     * 
+     * @param executionId The execution ID to cancel
+     * @return Response indicating success or failure
+     */
+    @PostMapping("/cancel/{executionId}")
+    public ResponseEntity<Map<String, Object>> cancelExecution(@PathVariable String executionId) {
+        logger.info("Received cancel request for execution: {}", executionId);
+        
+        try {
+            boolean cancelled = fortranExecutionService.cancelExecution(executionId);
+            
+            Map<String, Object> response = new java.util.HashMap<>();
+            if (cancelled) {
+                response.put("success", true);
+                response.put("message", "Execution cancelled successfully");
+                logger.info("Successfully cancelled execution: {}", executionId);
+                return ResponseEntity.ok(response);
+            } else {
+                response.put("success", false);
+                response.put("message", "Execution not found or already finished");
+                logger.warn("Failed to cancel execution: {} (not found or already finished)", executionId);
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+            }
+        } catch (Exception e) {
+            logger.error("Error cancelling execution {}: ", executionId, e);
+            Map<String, Object> response = new java.util.HashMap<>();
+            response.put("success", false);
+            response.put("message", "Error cancelling execution: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
         }
     }
     
@@ -216,5 +271,102 @@ public class CosmoController {
             logger.error("Error serving file {}: ", filename, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
+    }
+    
+    /**
+     * Validate that all parameters in potential expression have values
+     * Similar to initial conditions validation
+     * 
+     * @param expression The potential expression
+     * @param parameterValues Map of parameter names to values
+     * @return List of missing parameter names, empty if all parameters are provided
+     */
+    private List<String> validatePotentialParameters(String expression, Map<String, Double> parameterValues) {
+        List<String> missingParams = new ArrayList<>();
+        
+        if (expression == null || expression.trim().isEmpty()) {
+            return missingParams;
+        }
+        
+        Set<String> requiredParams = extractParameterSymbols(expression);
+        
+        if (requiredParams.isEmpty()) {
+            // No parameters in expression, validation passes
+            return missingParams;
+        }
+        
+        if (parameterValues == null || parameterValues.isEmpty()) {
+            // Expression has parameters but no values provided
+            missingParams.addAll(requiredParams);
+            return missingParams;
+        }
+        
+        // Check each required parameter (case-insensitive)
+        for (String param : requiredParams) {
+            boolean found = false;
+            for (String providedParam : parameterValues.keySet()) {
+                if (param.equalsIgnoreCase(providedParam)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                missingParams.add(param);
+            }
+        }
+        
+        return missingParams;
+    }
+    
+    /**
+     * Extract parameter symbols from a potential expression
+     * Finds all Latin letter identifiers (like m, lambda, i, etc.) that are not function names
+     * 
+     * @param expression The potential expression
+     * @return Set of parameter symbols found in the expression
+     */
+    private Set<String> extractParameterSymbols(String expression) {
+        Set<String> parameters = new HashSet<>();
+        
+        if (expression == null || expression.trim().isEmpty()) {
+            return parameters;
+        }
+        
+        // Common function names that should NOT be treated as parameters
+        Set<String> functionNames = new HashSet<>();
+        functionNames.add("sin"); functionNames.add("cos"); functionNames.add("tan");
+        functionNames.add("sinh"); functionNames.add("cosh"); functionNames.add("tanh");
+        functionNames.add("asin"); functionNames.add("acos"); functionNames.add("atan");
+        functionNames.add("exp"); functionNames.add("log"); functionNames.add("ln");
+        functionNames.add("sqrt"); functionNames.add("abs");
+        functionNames.add("x"); // x is the field array, not a parameter
+        
+        // Pattern to match identifiers: letters followed by optional letters/digits
+        Pattern identifierPattern = Pattern.compile("\\b([a-zA-Z][a-zA-Z0-9]*)\\b");
+        Matcher matcher = identifierPattern.matcher(expression);
+        
+        while (matcher.find()) {
+            String identifier = matcher.group(1).toLowerCase();
+            
+            // Skip if it's a function name
+            if (functionNames.contains(identifier)) {
+                continue;
+            }
+            
+            // Skip if it's part of x(...) array access
+            int start = matcher.start();
+            if (start > 0 && expression.charAt(start - 1) == '(') {
+                // Check if preceded by 'x'
+                int checkStart = Math.max(0, start - 2);
+                String before = expression.substring(checkStart, start);
+                if (before.endsWith("x")) {
+                    continue; // This is x(...), not a parameter
+                }
+            }
+            
+            parameters.add(identifier);
+        }
+        
+        return parameters;
     }
 }

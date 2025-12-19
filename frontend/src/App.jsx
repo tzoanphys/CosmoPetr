@@ -4,7 +4,7 @@ import { useState } from "react";
 import "./App.css";
 
 function App() {
-  // Which page is currently visible: "model", "initial", "summary", or "about"
+  // Which page is currently visible: "model", "initial", "summary", "about", or "instructions"
   const [activePage, setActivePage] = useState("about");
   // Number of scalar fields
   const [numFields, setNumFields] = useState(1);
@@ -110,9 +110,9 @@ function App() {
       const newArray = [...previousArray];
       
       if (n > newArray.length) {
-        // If we need more parameters, add empty ones with default value "0"
+        // If we need more parameters, add empty ones with empty value (user can enter their own)
         while (newArray.length < n) {
-          newArray.push({ name: "", value: "0" });
+          newArray.push({ name: "", value: "" });
         }
       } else if (n < newArray.length) {
         // If fewer parameters, cut the extra ones
@@ -139,7 +139,8 @@ function App() {
   function handleParameterValueChange(index, event) {
     const newValue = event.target.value;
     const copy = [...parameters];
-    copy[index] = { ...copy[index], value: newValue || "0" };
+    // Allow empty values - don't force "0"
+    copy[index] = { ...copy[index], value: newValue };
     setParameters(copy);
   }
 
@@ -149,6 +150,8 @@ function App() {
   const [calculationResult, setCalculationResult] = useState(null);
   const [isCalculating, setIsCalculating] = useState(false);
   const [error, setError] = useState(null);
+  const [currentExecutionId, setCurrentExecutionId] = useState(null);
+  const [abortController, setAbortController] = useState(null);
 
   // ----------------------------------------------------
   // When user clicks the "Run Calculation" button
@@ -176,13 +179,24 @@ function App() {
     setIsCalculating(true);
     setError(null);
     setCalculationResult(null);
+    setCurrentExecutionId(null);
+    
+    // Create AbortController for cancellation
+    const controller = new AbortController();
+    setAbortController(controller);
     
     // Prepare parameters object from the parameters array
+    // Only include parameters with valid names and numeric values
     const parametersObj = {};
     parameters.forEach(param => {
       if (param.name && param.name.trim() !== "") {
-        const value = parseFloat(param.value);
-        parametersObj[param.name] = isNaN(value) ? 0 : value;
+        const valueStr = param.value ? param.value.trim() : "";
+        if (valueStr !== "") {
+          const value = parseFloat(valueStr);
+          if (!isNaN(value)) {
+            parametersObj[param.name] = value;
+          }
+        }
       }
     });
 
@@ -207,7 +221,7 @@ function App() {
         -0.972870068569409      // b4
       ],
       potentialExpression: potential || "",
-      parameters: parametersObj,
+      parameterValues: parametersObj,
       numParameters: numParameters
     };
     
@@ -217,7 +231,8 @@ function App() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(requestData)
+        body: JSON.stringify(requestData),
+        signal: controller.signal
       });
       
       if (!response.ok) {
@@ -226,6 +241,7 @@ function App() {
       
       const result = await response.json();
       setCalculationResult(result);
+      setCurrentExecutionId(result.executionId);
       
       if (result.success) {
         const fileCount = result.outputFiles ? result.outputFiles.length : 0;
@@ -234,11 +250,71 @@ function App() {
         alert("❌ Calculation failed: " + result.message + "\n\nCheck the error details below.");
       }
     } catch (err) {
-      setError(err.message);
-      alert("Error: " + err.message);
-      console.error("Error:", err);
+      if (err.name === 'AbortError') {
+        setError("Calculation was cancelled by user");
+        setCalculationResult({
+          success: false,
+          message: "Calculation was cancelled",
+          executionId: currentExecutionId
+        });
+      } else {
+        setError(err.message);
+        alert("Error: " + err.message);
+        console.error("Error:", err);
+      }
     } finally {
       setIsCalculating(false);
+      setAbortController(null);
+    }
+  }
+
+  // ----------------------------------------------------
+  // Cancel running calculation
+  // ----------------------------------------------------
+  async function handleCancelCalculation() {
+    if (!abortController) {
+      return;
+    }
+    
+    try {
+      // Abort the fetch request first (this will interrupt the HTTP request)
+      abortController.abort();
+      
+      // If we have an executionId, also call backend cancel endpoint to kill the process
+      if (currentExecutionId) {
+        try {
+          const response = await fetch(`/api/cosmo-perturbations/cancel/${currentExecutionId}`, {
+            method: 'POST'
+          });
+          
+          if (response.ok) {
+            const result = await response.json();
+            if (result.success) {
+              console.log("Backend process cancelled successfully");
+            }
+          }
+        } catch (err) {
+          console.error("Error calling cancel endpoint:", err);
+          // Continue anyway - the abort should have stopped the request
+        }
+      }
+      
+      // Update UI
+      setIsCalculating(false);
+      setError("Calculation was cancelled by user");
+      setCalculationResult({
+        success: false,
+        message: "Calculation was cancelled by user",
+        executionId: currentExecutionId || "unknown"
+      });
+      alert("Calculation cancelled");
+    } catch (err) {
+      console.error("Error cancelling calculation:", err);
+      setIsCalculating(false);
+      setError("Calculation cancellation requested");
+    } finally {
+      setAbortController(null);
+      setCurrentExecutionId(null);
     }
   }
 
@@ -392,6 +468,248 @@ function App() {
                 Open PDF →
               </a>
             </div>
+
+            {/* Instructions button */}
+            <div style={{ 
+              marginTop: '30px', 
+              padding: '20px', 
+              backgroundColor: '#0a0a0a', 
+              borderRadius: '4px', 
+              border: '1px solid rgba(0, 191, 166, 0.3)', 
+              maxWidth: '95%' 
+            }}>
+              <strong style={{ 
+                color: '#00ffc3', 
+                display: 'block', 
+                marginBottom: '12px', 
+                fontSize: '16px' 
+              }}>
+                How to use this app
+              </strong>
+              <p style={{ 
+                color: '#e8fff7', 
+                margin: '0 0 16px 0',
+                fontSize: '14px'
+              }}>
+                Learn how to write potential expressions and use the app correctly.
+              </p>
+              <button 
+                className="primary-button" 
+                onClick={() => setActivePage("instructions")}
+                style={{ 
+                  backgroundColor: '#00ffc3',
+                  color: '#0a0a0a',
+                  fontWeight: 'bold',
+                  padding: '12px 24px',
+                  fontSize: '16px',
+                  border: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                View Instructions →
+              </button>
+            </div>
+          </section>
+        )}
+
+        {/* ================== PAGE: INSTRUCTIONS ================== */}
+        {activePage === "instructions" && (
+          <section className="section">
+            <h2 className="section-title">Instructions</h2>
+            
+            <div style={{ 
+              marginTop: '20px', 
+              padding: '20px', 
+              backgroundColor: '#0a0a0a', 
+              borderRadius: '4px', 
+              border: '1px solid rgba(0, 191, 166, 0.3)', 
+              maxWidth: '95%' 
+            }}>
+              <h3 style={{ 
+                color: '#00ffc3', 
+                fontSize: '20px', 
+                marginBottom: '16px',
+                marginTop: '0'
+              }}>
+                Writing Potential Expressions
+              </h3>
+              
+              <div style={{ marginBottom: '24px' }}>
+                <h4 style={{ 
+                  color: '#00ffc3', 
+                  fontSize: '16px', 
+                  marginBottom: '12px',
+                  marginTop: '0'
+                }}>
+                  Field Notation
+                </h4>
+                <ul style={{ 
+                  color: '#e8fff7', 
+                  fontSize: '14px',
+                  lineHeight: '1.8',
+                  paddingLeft: '20px',
+                  margin: '0'
+                }}>
+                  <li><code style={{ color: '#91fff3' }}>x(1)</code> represents field 1</li>
+                  <li><code style={{ color: '#91fff3' }}>x(2)</code> represents field 2</li>
+                  <li><code style={{ color: '#91fff3' }}>x(3)</code> represents field 3</li>
+                  <li>And so on for additional fields...</li>
+                </ul>
+              </div>
+
+              <div style={{ marginBottom: '24px' }}>
+                <h4 style={{ 
+                  color: '#00ffc3', 
+                  fontSize: '16px', 
+                  marginBottom: '12px',
+                  marginTop: '0'
+                }}>
+                  Mathematical Operators
+                </h4>
+                <ul style={{ 
+                  color: '#e8fff7', 
+                  fontSize: '14px',
+                  lineHeight: '1.8',
+                  paddingLeft: '20px',
+                  margin: '0'
+                }}>
+                  <li>Use <code style={{ color: '#91fff3' }}>**</code> for exponentiation, not <code style={{ color: '#91fff3' }}>^</code></li>
+                  <li>Example: <code style={{ color: '#91fff3' }}>10**2</code> = 100 (not <code style={{ color: '#91fff3' }}>10^2</code>)</li>
+                  <li>Use <code style={{ color: '#91fff3' }}>*</code> for multiplication</li>
+                  <li>Use <code style={{ color: '#91fff3' }}>/</code> for division</li>
+                  <li>Use <code style={{ color: '#91fff3' }}>+</code> and <code style={{ color: '#91fff3' }}>-</code> for addition and subtraction</li>
+                </ul>
+              </div>
+
+              <div style={{ marginBottom: '24px' }}>
+                <h4 style={{ 
+                  color: '#00ffc3', 
+                  fontSize: '16px', 
+                  marginBottom: '12px',
+                  marginTop: '0'
+                }}>
+                  Common Functions
+                </h4>
+                <ul style={{ 
+                  color: '#e8fff7', 
+                  fontSize: '14px',
+                  lineHeight: '1.8',
+                  paddingLeft: '20px',
+                  margin: '0'
+                }}>
+                  <li><code style={{ color: '#91fff3' }}>Sin(x)</code>, <code style={{ color: '#91fff3' }}>Cos(x)</code>, <code style={{ color: '#91fff3' }}>Tan(x)</code></li>
+                  <li><code style={{ color: '#91fff3' }}>Sinh(x)</code>, <code style={{ color: '#91fff3' }}>Cosh(x)</code>, <code style={{ color: '#91fff3' }}>Tanh(x)</code></li>
+                  <li><code style={{ color: '#91fff3' }}>Sqrt(x)</code> for square root</li>
+                  <li><code style={{ color: '#91fff3' }}>Exp(x)</code> for exponential</li>
+                  <li><code style={{ color: '#91fff3' }}>Log(x)</code> for natural logarithm</li>
+                </ul>
+              </div>
+
+              <div style={{ marginBottom: '24px' }}>
+                <h4 style={{ 
+                  color: '#00ffc3', 
+                  fontSize: '16px', 
+                  marginBottom: '12px',
+                  marginTop: '0'
+                }}>
+                  Examples
+                </h4>
+                <div style={{ 
+                  backgroundColor: '#050505', 
+                  padding: '16px', 
+                  borderRadius: '4px',
+                  border: '1px solid rgba(0, 191, 166, 0.2)',
+                  marginTop: '12px'
+                }}>
+                  <p style={{ 
+                    color: '#e8fff7', 
+                    fontSize: '14px',
+                    margin: '0 0 8px 0'
+                  }}>
+                    <strong style={{ color: '#00ffc3' }}>Single field:</strong>
+                  </p>
+                  <code style={{ 
+                    color: '#91fff3', 
+                    fontSize: '13px',
+                    display: 'block',
+                    marginBottom: '12px'
+                  }}>
+                    0.5 * m**2 * x(1)**2
+                  </code>
+                  
+                  <p style={{ 
+                    color: '#e8fff7', 
+                    fontSize: '14px',
+                    margin: '0 0 8px 0'
+                  }}>
+                    <strong style={{ color: '#00ffc3' }}>Two fields with parameters:</strong>
+                  </p>
+                  <code style={{ 
+                    color: '#91fff3', 
+                    fontSize: '13px',
+                    display: 'block',
+                    marginBottom: '12px'
+                  }}>
+                    A + G * x(1) - B * Tanh(c * x(1))
+                  </code>
+                  
+                  <p style={{ 
+                    color: '#e8fff7', 
+                    fontSize: '14px',
+                    margin: '0 0 8px 0'
+                  }}>
+                    <strong style={{ color: '#00ffc3' }}>With trigonometric functions:</strong>
+                  </p>
+                  <code style={{ 
+                    color: '#91fff3', 
+                    fontSize: '13px',
+                    display: 'block'
+                  }}>
+                    lambda * (1 - Cos(x(1) / f))
+                  </code>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '24px' }}>
+                <h4 style={{ 
+                  color: '#00ffc3', 
+                  fontSize: '16px', 
+                  marginBottom: '12px',
+                  marginTop: '0'
+                }}>
+                  Parameters
+                </h4>
+                <p style={{ 
+                  color: '#e8fff7', 
+                  fontSize: '14px',
+                  lineHeight: '1.8',
+                  margin: '0'
+                }}>
+                  You can use parameters (like <code style={{ color: '#91fff3' }}>m</code>, <code style={{ color: '#91fff3' }}>lambda</code>, <code style={{ color: '#91fff3' }}>A</code>, etc.) in your potential expression. 
+                  Define these parameters in the "Model setup" page by specifying their names and values. 
+                  The app will automatically replace the parameter symbols with their numeric values before execution.
+                </p>
+              </div>
+            </div>
+
+            {/* Navigation button */}
+            <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: '30px' }}>
+              <button 
+                className="primary-button" 
+                onClick={() => setActivePage("about")}
+                style={{ 
+                  backgroundColor: 'transparent',
+                  color: '#00ffc3',
+                  fontWeight: 'bold',
+                  padding: '12px 24px',
+                  fontSize: '16px',
+                  border: '1px solid rgba(0, 191, 166, 0.5)',
+                  cursor: 'pointer'
+                }}
+              >
+                ← Back to About
+              </button>
+            </div>
           </section>
         )}
 
@@ -480,7 +798,7 @@ function App() {
                       {/* Parameter value input */}
                       <input
                         type="text"
-                        value={parameters[index]?.value || "0"}
+                        value={parameters[index]?.value || ""}
                         onChange={(event) =>
                           handleParameterValueChange(index, event)
                         }
@@ -674,10 +992,11 @@ function App() {
               </div>
             )}
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '20px', gap: '10px' }}>
               <button 
                 className="primary-button" 
                 onClick={() => setActivePage("initial")}
+                disabled={isCalculating}
                 style={{ 
                   backgroundColor: 'transparent',
                   color: '#00ffc3',
@@ -685,22 +1004,42 @@ function App() {
                   padding: '12px 24px',
                   fontSize: '16px',
                   border: '1px solid rgba(0, 191, 166, 0.5)',
-                  cursor: 'pointer'
+                  cursor: isCalculating ? 'not-allowed' : 'pointer',
+                  opacity: isCalculating ? 0.5 : 1
                 }}
               >
                 ← Back
               </button>
-              <button 
-                className="primary-button" 
-                onClick={handleRunCalculation}
-                disabled={isCalculating}
-                style={{
-                  backgroundColor: isCalculating ? '#ccc' : '#4CAF50',
-                  cursor: isCalculating ? 'not-allowed' : 'pointer'
-                }}
-              >
-                {isCalculating ? 'Calculating...' : 'Run Calculation'}
-              </button>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                {isCalculating && (
+                  <button 
+                    className="primary-button" 
+                    onClick={handleCancelCalculation}
+                    style={{
+                      backgroundColor: '#ff4444',
+                      color: '#fff',
+                      fontWeight: 'bold',
+                      padding: '12px 24px',
+                      fontSize: '16px',
+                      border: 'none',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Cancel
+                  </button>
+                )}
+                <button 
+                  className="primary-button" 
+                  onClick={handleRunCalculation}
+                  disabled={isCalculating}
+                  style={{
+                    backgroundColor: isCalculating ? '#ccc' : '#4CAF50',
+                    cursor: isCalculating ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  {isCalculating ? 'Calculating...' : 'Run Calculation'}
+                </button>
+              </div>
             </div>
             
             {/* Display calculation results */}
