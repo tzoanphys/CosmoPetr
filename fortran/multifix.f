@@ -520,7 +520,7 @@ c      enddo
       
       ENDDO
       
-       do k=2,timestep2,k_step
+       do k=2,timestep2-100,k_step
        ! if(norma_back.gt.0.d0) then
        prk(k)=prk(k)*norma_back/norma
        !else

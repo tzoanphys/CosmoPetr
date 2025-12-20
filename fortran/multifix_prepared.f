@@ -13,7 +13,7 @@
 !*******************************************************************************
       module global
       implicit none
-      integer, parameter :: nf=2!, nf2=4
+      integer, parameter :: nf=1!, nf2=4
 !      real(8) ll(nf,nf),G(nf,nf,nf),x(nf),xd(nf)
       real*8 parameters(20)!,ccc!,b2!phi3,phi2!
       end module global
@@ -520,7 +520,7 @@ c      enddo
       
       ENDDO
       
-       do k=2,timestep2,k_step
+       do k=2,timestep2-100,k_step
        ! if(norma_back.gt.0.d0) then
        prk(k)=prk(k)*norma_back/norma
        !else

@@ -35,9 +35,9 @@ public class FortranExecutionService {
     private static final Logger logger = LoggerFactory.getLogger(FortranExecutionService.class);
     
     /**
-     * Maximum execution time in seconds (10 minutes)
+     * Maximum execution time in seconds (20 minutes)
      */
-    private static final long MAX_EXECUTION_TIME = 600;
+    private static final long MAX_EXECUTION_TIME = 1200;
     
     /**
      * Map to track running processes by execution ID

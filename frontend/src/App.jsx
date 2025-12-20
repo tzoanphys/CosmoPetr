@@ -3,13 +3,16 @@
 import { useState } from "react";
 import "./App.css";
 
+// API base URL - use environment variable in production, or relative path in development
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+
 function App() {
   // Which page is currently visible: "model", "initial", "summary", "about", or "instructions"
   const [activePage, setActivePage] = useState("about");
   // Number of scalar fields
   const [numFields, setNumFields] = useState(1);
-  // Potential V(phi)
-  const [potential, setPotential] = useState("0.5 * m^2 * phi1^2");
+  // Potential V(phi) - Starobinsky potential
+  const [potential, setPotential] = useState(" (1 - exp(-sqrt(2/3) * x(1)))**2");
   // Arrays for initial values and velocities of each field
   const [initialValues, setInitialValues] = useState([""]);
   const [initialVelocities, setInitialVelocities] = useState([""]);
@@ -226,7 +229,7 @@ function App() {
     };
     
     try {
-      const response = await fetch('/api/cosmo-perturbations/calculate', {
+      const response = await fetch(`${API_BASE_URL}/api/cosmo-perturbations/calculate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -283,7 +286,7 @@ function App() {
       // If we have an executionId, also call backend cancel endpoint to kill the process
       if (currentExecutionId) {
         try {
-          const response = await fetch(`/api/cosmo-perturbations/cancel/${currentExecutionId}`, {
+          const response = await fetch(`${API_BASE_URL}/api/cosmo-perturbations/cancel/${currentExecutionId}`, {
             method: 'POST'
           });
           
@@ -491,7 +494,7 @@ function App() {
                 margin: '0 0 16px 0',
                 fontSize: '14px'
               }}>
-                Learn how to write potential expressions and use the app correctly.
+                How to write potential expressions and use the app correctly. 
               </p>
               <button 
                 className="primary-button" 
@@ -1092,7 +1095,7 @@ function App() {
                     <ul style={{ marginTop: '10px', marginBottom: '0', paddingLeft: '20px', color: '#e8fff7', fontSize: '14px' }}>
                       {calculationResult.outputFiles.map((file, idx) => {
                         const isImage = file.toLowerCase().endsWith('.png') || file.toLowerCase().endsWith('.jpg') || file.toLowerCase().endsWith('.jpeg');
-                        const fileUrl = `/api/cosmo-perturbations/files/${encodeURIComponent(file)}`;
+                        const fileUrl = `${API_BASE_URL}/api/cosmo-perturbations/files/${encodeURIComponent(file)}`;
                         
                         return (
                           <li key={idx} style={{ marginBottom: '8px' }}>
@@ -1169,7 +1172,7 @@ function App() {
               </div>
             )}
             <p className="hint-text">
-              Right now it works only the 1 field scenario without change of metric. Potetential should be write with parameters. 
+              Right now it works  without change of metric. For more fields, the code maybe be crash because of server limitations.
               Later these issues will be fixed. 
             </p>
           </section>

@@ -17,8 +17,17 @@ public class CorsConfig {
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         CorsConfiguration config = new CorsConfiguration();
         
-        // Allow all localhost ports (5173, 5174, etc.)
+        // Allow all localhost ports (5173, 5174, etc.) for development
         config.addAllowedOriginPattern("http://localhost:*");
+        
+        // Allow production frontend URL from environment variable
+        String frontendUrl = System.getenv("FRONTEND_URL");
+        if (frontendUrl != null && !frontendUrl.isEmpty()) {
+            config.addAllowedOrigin(frontendUrl);
+        }
+        
+        // Allow all Netlify preview deployments (wildcard)
+        config.addAllowedOriginPattern("https://*.netlify.app");
         
         // Allow all HTTP methods
         config.addAllowedMethod("*");

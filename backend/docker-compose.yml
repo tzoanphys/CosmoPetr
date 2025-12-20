@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: cosmopetr-postgres
+    environment:
+      POSTGRES_USER: cosmo_user
+      POSTGRES_PASSWORD: cosmo_password
+      POSTGRES_DB: cosmopetr_db
+    ports:
+      - "5433:5432"  # Use 5433 on host to avoid conflict with local PostgreSQL
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cosmo_user -d cosmopetr_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cosmopetr-network
+
+  # Spring Boot Backend
+  backend:
+    build:
+      context: ..  # Build from project root (same as Render)
+      dockerfile: backend/Dockerfile
+    container_name: cosmopetr-backend
+    environment:
+      # Database connection (will connect to postgres service)
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/cosmopetr_db
+      SPRING_DATASOURCE_USERNAME: cosmo_user
+      SPRING_DATASOURCE_PASSWORD: cosmo_password
+      # Server port
+      SERVER_PORT: 8080
+    ports:
+      - "8080:8080"
+    volumes:
+      # Mount fortran directory from host (adjust path if needed)
+      - ../fortran:/app/fortran
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - cosmopetr-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  cosmopetr-network:
+    driver: bridge
+
