@@ -509,6 +509,16 @@ public class FortranExecutionService {
         Path sourceFile = prepareMultifixSource(fortranDir, numFields);
         Path executable = fortranDir.resolve("multifix.exe");
         
+        // Delete old executable to ensure fresh compilation
+        if (Files.exists(executable)) {
+            try {
+                Files.delete(executable);
+                logger.info("🗑️  Deleted old executable to ensure fresh compilation: {}", executable.getFileName());
+            } catch (IOException e) {
+                logger.warn("Could not delete old executable {}: {}", executable, e.getMessage());
+            }
+        }
+        
         logger.info("Compiling Fortran program: {} -> {}", sourceFile, executable);
         
         // Build compilation command
@@ -573,9 +583,11 @@ public class FortranExecutionService {
      */
     public FortranExecutionResult executeFortran(InitialConditionsDTO initialConditions) {
         String executionId = UUID.randomUUID().toString();
+        long executionStartTime = System.currentTimeMillis();
         
         logger.info("========================================");
         logger.info("Starting Fortran execution with ID: {}", executionId);
+        logger.info("Execution start time: {}", new java.util.Date(executionStartTime));
         logger.info("========================================");
         
         try {
@@ -596,7 +608,11 @@ public class FortranExecutionService {
             
             logger.info("Using fortran directory: {}", fortranDir);
             
-            // Step 1.5: Clean up previous plot files
+            // Step 1.5: Clean up previous output files to ensure fresh data
+            // Delete old n_prz_kmode.txt to ensure we get fresh data for plotting
+            cleanupOldDataFiles(fortranDir);
+            
+            // Step 1.6: Clean up previous plot files
             cleanupOldPlots(fortranDir);
             
             // Step 2: Replace parameters in potential expression
@@ -690,22 +706,49 @@ public class FortranExecutionService {
                 
                 int exitCode = process.exitValue();
                 
-                // Step 8: Collect output files
+                // Step 8: Wait a moment to ensure all files are fully written and flushed to disk
+                // This is important because Fortran may have written the files but they might not be
+                // fully flushed to disk yet
+                try {
+                    Thread.sleep(500); // Wait 500ms for file system to sync
+                    logger.debug("Waited 500ms for file system sync");
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    logger.warn("Interrupted while waiting for file sync");
+                }
+                
+                // Step 9: Collect output files (text files only, no plots)
                 // The Fortran program writes various output files to the fortran directory
                 List<String> outputFiles = collectOutputFiles(fortranDir);
                 
-                // Step 9: Generate plot if calculation was successful
+                // Step 10: Generate plot from final n_prz_kmode.txt if calculation was successful
+                // The Python script (plot_results.py) will read n_prz_kmode.txt and create a PNG plot
+                // IMPORTANT: Clean up old plots AFTER generating new one, so we always have the latest plot
                 if (exitCode == 0) {
                     try {
-                        String plotFile = generatePlot(fortranDir, executionId);
+                        logger.info("========================================");
+                        logger.info("Running Python script to generate plot from final n_prz_kmode.txt...");
+                        logger.info("========================================");
+                        String plotFile = generatePlot(fortranDir, executionId, executionStartTime);
                         if (plotFile != null) {
+                            // Only add the newly generated plot (not any old ones)
                             outputFiles.add(plotFile);
-                            logger.info("✅ Generated plot: {}", plotFile);
+                            logger.info("✅ Plot generated successfully: {} (will be sent to frontend)", plotFile);
+                            
+                            // Clean up OLD plot files AFTER generating new one
+                            // Keep only the latest plot file, delete all others
+                            logger.info("Cleaning up old plot files, keeping only: {}", plotFile);
+                            cleanupOldPlotsExcept(fortranDir, plotFile);
+                        } else {
+                            logger.error("❌ Plot generation returned null - plot will not be sent to frontend");
+                            logger.error("Check Python script output above for errors");
                         }
                     } catch (Exception e) {
-                        logger.warn("Failed to generate plot: {}", e.getMessage());
-                        // Don't fail the entire execution if plotting fails
+                        logger.error("❌ Failed to generate plot: {}", e.getMessage(), e);
+                        // Don't fail the entire execution if plotting fails, but log the error
                     }
+                } else {
+                    logger.warn("Fortran execution failed (exit code {}), skipping plot generation", exitCode);
                 }
                 
                 if (exitCode == 0) {
@@ -831,6 +874,52 @@ public class FortranExecutionService {
     }
     
     /**
+     * Clean up old data files that might contain stale data
+     * Deletes n_prz_kmode.txt to ensure fresh data for each calculation
+     * 
+     * @param fortranDir The directory containing the data files
+     */
+    private void cleanupOldDataFiles(Path fortranDir) {
+        try {
+            // Delete n_prz_kmode.txt to ensure we get fresh data
+            Path dataFile = fortranDir.resolve("n_prz_kmode.txt");
+            if (Files.exists(dataFile)) {
+                try {
+                    Files.delete(dataFile);
+                    logger.info("🗑️  Deleted old n_prz_kmode.txt to ensure fresh data");
+                } catch (IOException e) {
+                    logger.warn("Failed to delete old n_prz_kmode.txt {}: {}", dataFile, e.getMessage());
+                }
+            } else {
+                logger.debug("n_prz_kmode.txt does not exist (first run or already cleaned)");
+            }
+            
+            // Also delete other output files that might contain stale data
+            // This ensures each calculation starts with a clean slate
+            String[] outputFilesToClean = {
+                "information.txt", "fields.txt", "n_epsilon_hubble.txt", 
+                "kmode.txt", "bardeen_initial.txt", "prslow.txt", "gw2.txt",
+                "n_ps_kmode.txt", "m_o_k_ps.txt", "m_o_k_pt.txt"
+            };
+            
+            for (String filename : outputFilesToClean) {
+                Path file = fortranDir.resolve(filename);
+                if (Files.exists(file)) {
+                    try {
+                        Files.delete(file);
+                        logger.debug("Deleted old output file: {}", filename);
+                    } catch (IOException e) {
+                        logger.warn("Failed to delete old output file {}: {}", filename, e.getMessage());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("Error cleaning up old data files: {}", e.getMessage());
+            // Don't fail the execution if cleanup fails
+        }
+    }
+    
+    /**
      * Clean up previous plot files from the fortran directory
      * Deletes all files matching the pattern n_prz_kmode_plot_*.png
      * 
@@ -867,25 +956,152 @@ public class FortranExecutionService {
     }
     
     /**
+     * Clean up old plot files except for the one to keep
+     * Deletes all plot files matching the pattern n_prz_kmode_plot_*.png
+     * except for the specified file
+     * 
+     * @param fortranDir The directory containing the plot files
+     * @param plotFileToKeep The plot file to keep (e.g., "n_prz_kmode_plot_abc12345.png")
+     */
+    private void cleanupOldPlotsExcept(Path fortranDir, String plotFileToKeep) {
+        try {
+            // Find all plot files matching the pattern, except the one to keep
+            try (java.util.stream.Stream<Path> stream = Files.list(fortranDir)) {
+                long deletedCount = stream
+                    .filter(Files::isRegularFile)
+                    .filter(path -> {
+                        String filename = path.getFileName().toString();
+                        // Match plot files but exclude the one we want to keep
+                        return filename.startsWith("n_prz_kmode_plot_") 
+                            && filename.endsWith(".png")
+                            && !filename.equals(plotFileToKeep);
+                    })
+                    .peek(path -> {
+                        try {
+                            Files.delete(path);
+                            logger.info("🗑️  Deleted old plot file: {}", path.getFileName());
+                        } catch (IOException e) {
+                            logger.warn("Failed to delete old plot file {}: {}", path.getFileName(), e.getMessage());
+                        }
+                    })
+                    .count();
+                
+                if (deletedCount > 0) {
+                    logger.info("Cleaned up {} old plot file(s), keeping: {}", deletedCount, plotFileToKeep);
+                }
+            }
+        } catch (IOException e) {
+            logger.warn("Error cleaning up old plots: {}", e.getMessage());
+            // Don't fail the execution if cleanup fails
+        }
+    }
+    
+    /**
      * Generate plot from n_prz_kmode.txt using Python script
      * Creates a log-scale plot and saves it as PNG
      * 
      * @param fortranDir The directory containing the data file and plot script
      * @param executionId Execution ID for unique plot filename
+     * @param executionStartTime Timestamp when execution started (to verify file is fresh)
      * @return Name of the generated plot file, or null if generation failed
      * @throws IOException If plot generation fails
      * @throws InterruptedException If plot generation is interrupted
      */
-    private String generatePlot(Path fortranDir, String executionId) throws IOException, InterruptedException {
+    private String generatePlot(Path fortranDir, String executionId, long executionStartTime) throws IOException, InterruptedException {
         Path dataFile = fortranDir.resolve("n_prz_kmode.txt");
         Path plotScript = fortranDir.resolve("plot_results.py");
         String plotFileName = "n_prz_kmode_plot_" + executionId.substring(0, 8) + ".png";
         Path plotFile = fortranDir.resolve(plotFileName);
         
+        logger.info("Plot generation - Data file path: {}", dataFile.toAbsolutePath());
+        logger.info("Plot generation - Plot script path: {}", plotScript.toAbsolutePath());
+        logger.info("Plot generation - Output plot path: {}", plotFile.toAbsolutePath());
+        
+        // Delete the plot file if it already exists (shouldn't happen after cleanup, but safety check)
+        if (Files.exists(plotFile)) {
+            try {
+                Files.delete(plotFile);
+                logger.info("Deleted existing plot file before generating new one: {}", plotFileName);
+            } catch (IOException e) {
+                logger.warn("Could not delete existing plot file {}: {}", plotFileName, e.getMessage());
+            }
+        }
+        
         // Check if data file exists
         if (!Files.exists(dataFile)) {
             logger.warn("Data file not found for plotting: {}", dataFile);
             return null;
+        }
+        
+        // Verify the data file was written during THIS execution
+        // This ensures we're using the file from the current execution, not an old one
+        try {
+            long fileModifiedTime = Files.getLastModifiedTime(dataFile).toMillis();
+            long currentTime = System.currentTimeMillis();
+            long ageSeconds = (currentTime - fileModifiedTime) / 1000;
+            
+            // Check if file was modified AFTER execution started (with 10 second buffer for file system delays)
+            if (fileModifiedTime < (executionStartTime - 10000)) {
+                logger.error("⚠️  CRITICAL WARNING: Data file {} was modified BEFORE execution started!", dataFile);
+                logger.error("⚠️  File modified: {}", new java.util.Date(fileModifiedTime));
+                logger.error("⚠️  Execution started: {}", new java.util.Date(executionStartTime));
+                logger.error("⚠️  This plot will NOT represent the current calculation!");
+                logger.error("⚠️  The file is {} seconds older than execution start", 
+                    (executionStartTime - fileModifiedTime) / 1000);
+                // Still try to generate plot, but this is a serious issue
+            } else if (ageSeconds > 120) {
+                logger.warn("⚠️  WARNING: Data file {} is {} seconds old", dataFile, ageSeconds);
+                logger.warn("   File modified: {}, Current time: {}", 
+                    new java.util.Date(fileModifiedTime), new java.util.Date(currentTime));
+            } else {
+                logger.info("✅ Data file {} is fresh (modified {} seconds ago, after execution start)", 
+                    dataFile, ageSeconds);
+                logger.info("   File modified: {}, Execution started: {}", 
+                    new java.util.Date(fileModifiedTime), new java.util.Date(executionStartTime));
+            }
+            
+            // Log file size for debugging
+            long fileSize = Files.size(dataFile);
+            logger.info("Data file size: {} bytes", fileSize);
+            
+            // If file is empty, wait a bit and retry (file might still be writing)
+            if (fileSize == 0) {
+                logger.warn("Data file is empty, waiting for Fortran to finish writing...");
+                // Wait up to 5 seconds for file to be written
+                for (int retry = 0; retry < 10; retry++) {
+                    try {
+                        Thread.sleep(500); // Wait 500ms
+                        fileSize = Files.size(dataFile);
+                        if (fileSize > 0) {
+                            logger.info("Data file now has content: {} bytes (after {} retries)", fileSize, retry + 1);
+                            break;
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        logger.warn("Interrupted while waiting for data file");
+                        break;
+                    } catch (IOException e) {
+                        logger.warn("Error checking file size during retry: {}", e.getMessage());
+                    }
+                }
+                
+                if (fileSize == 0) {
+                    logger.error("Data file is still empty after retries: {}", dataFile);
+                    logger.error("This may indicate the Fortran program did not write to n_prz_kmode.txt");
+                    logger.error("Check if the calculation completed successfully and if the write(93,*) statement executed");
+                    return null;
+                }
+            }
+            
+            // Read first few lines to verify it's the right file
+            try (BufferedReader reader = Files.newBufferedReader(dataFile)) {
+                String firstLine = reader.readLine();
+                if (firstLine != null) {
+                    logger.info("First line of data file: {}", firstLine.substring(0, Math.min(80, firstLine.length())));
+                }
+            }
+        } catch (IOException e) {
+            logger.warn("Could not check data file metadata: {}", e.getMessage());
         }
         
         // Check if plot script exists
@@ -894,9 +1110,15 @@ public class FortranExecutionService {
             return null;
         }
         
-        logger.info("Generating plot from {} -> {}", dataFile, plotFile);
+        logger.info("========================================");
+        logger.info("Generating plot using Python script");
+        logger.info("Input data file: {} (will read N(efold) from col 0, P_R from col 1)", dataFile);
+        logger.info("Output plot file: {}", plotFile);
+        logger.info("Plot script: {}", plotScript);
+        logger.info("========================================");
         
-        // Run Python script to generate plot
+        // Run Python script to generate plot from the final n_prz_kmode.txt
+        // This will create a PNG plot that will be sent to the frontend
         ProcessBuilder plotBuilder = new ProcessBuilder(
             "python3",
             plotScript.toString(),
@@ -906,57 +1128,148 @@ public class FortranExecutionService {
         
         // Try python if python3 doesn't work
         plotBuilder.directory(fortranDir.toFile());
-        plotBuilder.redirectErrorStream(true);
+        // Don't redirect error stream - we want to capture both stdout and stderr separately
+        // Python script writes debug info to stderr
         
         try {
-            Process plotProcess = plotBuilder.start();
+            final Process plotProcess = plotBuilder.start();
             
-            // Read output
-            StringBuilder plotOutput = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(plotProcess.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    plotOutput.append(line).append("\n");
-                    logger.debug("Plot output: {}", line);
-                }
-            }
+            // Read output from both stdout and stderr
+            // Python script writes debug info to stderr, success messages to stdout
+            final StringBuilder plotOutput = new StringBuilder();
+            final StringBuilder plotErrors = new StringBuilder();
             
-            int plotExitCode = plotProcess.waitFor();
-            
-            if (plotExitCode == 0 && Files.exists(plotFile) && Files.size(plotFile) > 0) {
-                logger.info("✅ Plot generated successfully: {}", plotFileName);
-                return plotFileName;
-            } else {
-                // Try with 'python' instead of 'python3'
-                logger.info("Trying with 'python' instead of 'python3'");
-                plotBuilder = new ProcessBuilder(
-                    "python",
-                    plotScript.toString(),
-                    dataFile.toString(),
-                    plotFile.toString()
-                );
-                plotBuilder.directory(fortranDir.toFile());
-                plotBuilder.redirectErrorStream(true);
-                
-                plotProcess = plotBuilder.start();
-                plotOutput = new StringBuilder();
+            // Read stdout in a separate thread to avoid blocking
+            Thread stdoutThread = new Thread(() -> {
                 try (BufferedReader reader = new BufferedReader(
                         new InputStreamReader(plotProcess.getInputStream()))) {
                     String line;
                     while ((line = reader.readLine()) != null) {
                         plotOutput.append(line).append("\n");
+                        logger.info("Python stdout: {}", line);
                     }
+                } catch (IOException e) {
+                    logger.warn("Error reading Python stdout: {}", e.getMessage());
+                }
+            });
+            
+            // Read stderr in a separate thread
+            Thread stderrThread = new Thread(() -> {
+                try (BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(plotProcess.getErrorStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        plotErrors.append(line).append("\n");
+                        logger.info("Python stderr: {}", line);
+                    }
+                } catch (IOException e) {
+                    logger.warn("Error reading Python stderr: {}", e.getMessage());
+                }
+            });
+            
+            stdoutThread.start();
+            stderrThread.start();
+            
+            // Wait for both threads to finish
+            stdoutThread.join();
+            stderrThread.join();
+            
+            int plotExitCode = plotProcess.waitFor();
+            
+            logger.info("Python script exit code: {}", plotExitCode);
+            if (plotExitCode != 0) {
+                logger.error("Python script failed with exit code: {}", plotExitCode);
+                logger.error("Python output: {}", plotOutput.toString());
+                logger.error("Python errors: {}", plotErrors.toString());
+            }
+            
+            if (plotExitCode == 0 && Files.exists(plotFile) && Files.size(plotFile) > 0) {
+                // Verify the plot file was just created (within last minute)
+                try {
+                    long plotFileModifiedTime = Files.getLastModifiedTime(plotFile).toMillis();
+                    long currentTime = System.currentTimeMillis();
+                    long ageSeconds = (currentTime - plotFileModifiedTime) / 1000;
+                    
+                    if (ageSeconds > 60) {
+                        logger.warn("Plot file {} is {} seconds old - may not be from current execution!", 
+                            plotFileName, ageSeconds);
+                    } else {
+                        logger.info("Plot file {} was created {} seconds ago (fresh)", plotFileName, ageSeconds);
+                    }
+                    
+                    long plotFileSize = Files.size(plotFile);
+                    logger.info("Plot file size: {} bytes", plotFileSize);
+                } catch (IOException e) {
+                    logger.warn("Could not verify plot file metadata: {}", e.getMessage());
                 }
                 
-                plotExitCode = plotProcess.waitFor();
+                logger.info("✅ Plot generated successfully: {}", plotFileName);
+                logger.info("Plot file path: {}", plotFile.toAbsolutePath());
+                return plotFileName;
+            } else {
+                // Try with 'python' instead of 'python3'
+                logger.info("Trying with 'python' instead of 'python3'");
+                ProcessBuilder plotBuilder2 = new ProcessBuilder(
+                    "python",
+                    plotScript.toString(),
+                    dataFile.toString(),
+                    plotFile.toString()
+                );
+                plotBuilder2.directory(fortranDir.toFile());
+                // Don't redirect error stream
+                
+                Process plotProcess2 = plotBuilder2.start();
+                final StringBuilder plotOutput2 = new StringBuilder();
+                final StringBuilder plotErrors2 = new StringBuilder();
+                
+                // Read stdout and stderr in separate threads
+                Thread stdoutThread2 = new Thread(() -> {
+                    try (BufferedReader reader = new BufferedReader(
+                            new InputStreamReader(plotProcess2.getInputStream()))) {
+                        String line;
+                        while ((line = reader.readLine()) != null) {
+                            plotOutput2.append(line).append("\n");
+                            logger.info("Python stdout (retry): {}", line);
+                        }
+                    } catch (IOException e) {
+                        logger.warn("Error reading Python stdout: {}", e.getMessage());
+                    }
+                });
+                
+                Thread stderrThread2 = new Thread(() -> {
+                    try (BufferedReader reader = new BufferedReader(
+                            new InputStreamReader(plotProcess2.getErrorStream()))) {
+                        String line;
+                        while ((line = reader.readLine()) != null) {
+                            plotErrors2.append(line).append("\n");
+                            logger.info("Python stderr (retry): {}", line);
+                        }
+                    } catch (IOException e) {
+                        logger.warn("Error reading Python stderr: {}", e.getMessage());
+                    }
+                });
+                
+                stdoutThread2.start();
+                stderrThread2.start();
+                stdoutThread2.join();
+                stderrThread2.join();
+                
+                plotExitCode = plotProcess2.waitFor();
+                
+                logger.info("Python script exit code (retry): {}", plotExitCode);
                 
                 if (plotExitCode == 0 && Files.exists(plotFile) && Files.size(plotFile) > 0) {
                     logger.info("✅ Plot generated successfully: {}", plotFileName);
                     return plotFileName;
                 } else {
-                    logger.warn("Plot generation failed. Exit code: {}, Output: {}", 
-                        plotExitCode, plotOutput.toString());
+                    logger.error("Plot generation failed. Exit code: {}", plotExitCode);
+                    logger.error("Python output: {}", plotOutput2.toString());
+                    logger.error("Python errors: {}", plotErrors2.toString());
+                    if (Files.exists(plotFile)) {
+                        logger.error("Plot file exists but size is: {} bytes", Files.size(plotFile));
+                    } else {
+                        logger.error("Plot file does not exist: {}", plotFile);
+                    }
                     return null;
                 }
             }
@@ -969,9 +1282,11 @@ public class FortranExecutionService {
     /**
      * Collect output files from the fortran directory
      * The Fortran program generates various .txt files with results
+     * NOTE: This method only collects .txt files, NOT plot files (.png)
+     * Plot files are handled separately in generatePlot()
      * 
      * @param fortranDir The directory containing output files
-     * @return List of output file names
+     * @return List of output file names (text files only)
      * @throws IOException If file collection fails
      */
     private List<String> collectOutputFiles(Path fortranDir) throws IOException {
@@ -984,6 +1299,7 @@ public class FortranExecutionService {
         
         // List of expected output files from multifix.f
         // These are the files the Fortran program writes
+        // NOTE: Only .txt files, NOT plot files (.png)
         String[] expectedOutputFiles = {
             "information.txt",
             "fields.txt",
@@ -1003,7 +1319,7 @@ public class FortranExecutionService {
             }
         }
         
-        logger.info("Collected {} output file(s)", files.size());
+        logger.info("Collected {} output file(s) (text files only, no plots)", files.size());
         return files;
     }
     

@@ -21,17 +21,25 @@ def plot_n_prz_kmode(data_file, output_file):
     """
     try:
         # Read data from file
-        # Expected format: column 1 = k mode (x values), column 2 = n_prz (y values)
-        # This matches gnuplot: p "n_prz_kmode.txt" u 1:2 w l
+        # Expected format from Fortran: write(93,*) t(k) +n_back,prk(k),ks_norm
+        # Column 0 = N(efold) = t(k) + n_back (x-axis)
+        # Column 1 = P_R = prk(k) (y-axis)
+        # Column 2 = ks_norm (k mode, not used for this plot)
+        print(f"Reading data from: {data_file}", file=sys.stderr)
         data = np.loadtxt(data_file)
         
         if data.ndim == 1:
             # If only one row, reshape
             data = data.reshape(1, -1)
         
-        # Extract columns: column 1 = k mode, column 2 = n_prz
-        x = data[:, 0]  # k mode
-        y = data[:, 1]  # n_prz
+        print(f"Data shape: {data.shape}, Number of rows: {len(data)}", file=sys.stderr)
+        
+        # Extract columns: column 0 = N(efold), column 1 = P_R
+        x = data[:, 0]  # N(efold) - x-axis
+        y = data[:, 1]  # P_R - y-axis
+        
+        print(f"X range: [{np.min(x):.2f}, {np.max(x):.2f}]", file=sys.stderr)
+        print(f"Y range: [{np.min(y):.6e}, {np.max(y):.6e}]", file=sys.stderr)
         
         # Filter out invalid values (zeros, negatives, NaN, inf)
         valid_mask = (y > 0) & np.isfinite(y) & np.isfinite(x)

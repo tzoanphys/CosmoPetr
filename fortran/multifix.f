@@ -60,7 +60,7 @@
       real*8 prk_min(timestep), ks_norm_min,norma_p,norma_m
       parameter(t0=0,dt=0.05D0,kstar=0.05d0,
      +dpr=0.001,cq=100.d0,dc=0.45d0
-     +,k_step=1,epsi=1.d-6)
+     +,k_step=2,epsi=1.d-5)
       !real*8 pot(200),yy
       real*8 pi,opbh_ps,mpeak_ps,ppeak
       real*8 opbh_pt,mpeak_pt,ppeak_pt

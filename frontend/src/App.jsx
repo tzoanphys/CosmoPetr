@@ -11,6 +11,8 @@ function App() {
   const [activePage, setActivePage] = useState("about");
   // Number of scalar fields
   const [numFields, setNumFields] = useState(1);
+  // Display value for number of fields (allows typing)
+  const [numFieldsInput, setNumFieldsInput] = useState("1");
   // Potential V(phi) - Starobinsky potential
   const [potential, setPotential] = useState(" (1 - exp(-sqrt(2/3) * x(1)))**2");
   // Arrays for initial values and velocities of each field
@@ -20,6 +22,8 @@ function App() {
   const [initialTime, setInitialTime] = useState("0.0");
   // Number of parameters
   const [numParameters, setNumParameters] = useState(0);
+  // Display value for number of parameters (allows typing)
+  const [numParametersInput, setNumParametersInput] = useState("0");
   // Array of parameter objects: [{name: "m", value: "1.0"}, ...]
   const [parameters, setParameters] = useState([]);
 
@@ -30,12 +34,15 @@ function App() {
     // event.target.value is a string from the input
     const valueAsString = event.target.value;
 
+    // Update the input display value to allow free typing
+    setNumFieldsInput(valueAsString);
+
     // Convert to integer
     let n = parseInt(valueAsString, 10);
 
-    // If conversion fails or n < 1, set n = 1
+    // If conversion fails or n < 1, don't update the actual number or arrays
     if (isNaN(n) || n < 1) {
-      n = 1;
+      return;
     }
 
     // Update state for number of fields
@@ -99,11 +106,15 @@ function App() {
   // ----------------------------------------------------
   function handleNumParametersChange(event) {
     const valueAsString = event.target.value;
+    
+    // Update the input display value to allow free typing
+    setNumParametersInput(valueAsString);
+    
     let n = parseInt(valueAsString, 10);
     
-    // If conversion fails or n < 0, set n = 0
+    // If conversion fails or n < 0, don't update the actual number or arrays
     if (isNaN(n) || n < 0) {
-      n = 0;
+      return;
     }
     
     setNumParameters(n);
@@ -181,8 +192,13 @@ function App() {
     
     setIsCalculating(true);
     setError(null);
+    // Clear previous result immediately to prevent showing old plot
     setCalculationResult(null);
     setCurrentExecutionId(null);
+    
+    // Force a small delay to ensure React re-renders and clears the old image
+    // This helps prevent showing cached images
+    await new Promise(resolve => setTimeout(resolve, 100));
     
     // Create AbortController for cancellation
     const controller = new AbortController();
@@ -407,7 +423,7 @@ function App() {
           <h1 className="name-title">Cosmological Perturbations</h1>
           <p className="header-subtitle">
             Define your multi-field inflation model and initial conditions. This app 
-            will give you the power spectra.
+            will give you the infaltionary dynamics and the power spectrum.
           </p>
         </section>
 
@@ -723,7 +739,7 @@ function App() {
             <p className="section-text">
               Choose the number of scalar fields and specify the potential
               V(φᵢ). You can use a simple math-like syntax (for example{" "}
-              <code>0.5*m^2*phi1^2 + lambda*phi1^4</code>).
+              <code>0.5*m^2*x(1)**2 + lambda*x(1)**4</code>).
             </p>
 
             <div className="form-grid">
@@ -731,10 +747,21 @@ function App() {
               <label className="form-field">
                 <span className="field-label">Number of fields</span>
                 <input
-                  type="number"
-                  min="1"
-                  value={numFields}
+                  type="text"
+                  value={numFieldsInput}
                   onChange={handleNumFieldsChange}
+                  onBlur={(e) => {
+                    // On blur, validate and fix if needed
+                    const n = parseInt(e.target.value, 10);
+                    if (isNaN(n) || n < 1) {
+                      setNumFieldsInput("1");
+                      setNumFields(1);
+                    } else {
+                      setNumFieldsInput(String(n));
+                      setNumFields(n);
+                    }
+                  }}
+                  placeholder="e.g. 1, 2, 3"
                 />
               </label>
 
@@ -742,10 +769,21 @@ function App() {
               <label className="form-field">
                 <span className="field-label">Number of parameters</span>
                 <input
-                  type="number"
-                  min="0"
-                  value={numParameters}
+                  type="text"
+                  value={numParametersInput}
                   onChange={handleNumParametersChange}
+                  onBlur={(e) => {
+                    // On blur, validate and fix if needed
+                    const n = parseInt(e.target.value, 10);
+                    if (isNaN(n) || n < 0) {
+                      setNumParametersInput("0");
+                      setNumParameters(0);
+                    } else {
+                      setNumParametersInput(String(n));
+                      setNumParameters(n);
+                    }
+                  }}
+                  placeholder="e.g. 0, 1, 2"
                 />
               </label>
 
@@ -947,7 +985,7 @@ function App() {
             <h2 className="section-title">3. Summary / Export</h2>
             <p className="section-text">
               Here is a quick preview of the configuration that will be sent to
-              the backend solver.
+               run.
             </p>
 
             {/* Show all data in JSON format (potential excluded to avoid duplication) */}
@@ -1095,7 +1133,14 @@ function App() {
                     <ul style={{ marginTop: '10px', marginBottom: '0', paddingLeft: '20px', color: '#e8fff7', fontSize: '14px' }}>
                       {calculationResult.outputFiles.map((file, idx) => {
                         const isImage = file.toLowerCase().endsWith('.png') || file.toLowerCase().endsWith('.jpg') || file.toLowerCase().endsWith('.jpeg');
-                        const fileUrl = `${API_BASE_URL}/api/cosmo-perturbations/files/${encodeURIComponent(file)}`;
+                        // Add cache-busting query parameter to force browser to reload the image
+                        // Use executionId and timestamp to ensure unique URL for each calculation
+                        // For plot files, use a more aggressive cache-busting approach
+                        const isPlotFile = file.toLowerCase().includes('plot');
+                        const cacheBuster = calculationResult.executionId 
+                          ? `?t=${Date.now()}&id=${calculationResult.executionId.substring(0, 8)}&v=${isPlotFile ? 'plot' : 'file'}`
+                          : `?t=${Date.now()}&v=${isPlotFile ? 'plot' : 'file'}`;
+                        const fileUrl = `${API_BASE_URL}/api/cosmo-perturbations/files/${encodeURIComponent(file)}${cacheBuster}`;
                         
                         return (
                           <li key={idx} style={{ marginBottom: '8px' }}>
@@ -1109,6 +1154,7 @@ function App() {
                                 <img 
                                   src={fileUrl} 
                                   alt={file}
+                                  key={`${file}-${calculationResult.executionId || Date.now()}`}
                                   style={{
                                     width: '100%',
                                     height: 'auto',
@@ -1125,6 +1171,11 @@ function App() {
                                     e.target.style.display = 'none';
                                     console.error('Failed to load image:', fileUrl);
                                   }}
+                                  onLoad={() => {
+                                    // Force image refresh by removing and re-adding cache-busting parameter
+                                    console.log('Plot image loaded:', file);
+                                  }}
+                                  loading="eager"
                                 />
                               </div>
                             ) : (

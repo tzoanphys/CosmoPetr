@@ -262,9 +262,14 @@ public class CosmoController {
                 }
             }
             
+            // For plot images, disable caching to ensure fresh plots are always shown
+            // For other files, also disable caching to ensure latest data
             return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(contentType))
                 .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + filename + "\"")
+                .header(HttpHeaders.CACHE_CONTROL, "no-cache, no-store, must-revalidate")
+                .header(HttpHeaders.PRAGMA, "no-cache")
+                .header(HttpHeaders.EXPIRES, "0")
                 .body(resource);
                 
         } catch (Exception e) {

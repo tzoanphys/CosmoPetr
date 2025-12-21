@@ -10,7 +10,11 @@ WORKDIR /app
 COPY backend/pom.xml pom.xml
 
 # Download dependencies (this layer will be cached if pom.xml doesn't change)
-RUN mvn dependency:go-offline -B
+# Retry up to 3 times in case of network issues (502, timeout, etc.)
+RUN for i in 1 2 3; do \
+        mvn dependency:go-offline -B && break || \
+        (echo "Attempt $i failed, retrying..." && sleep 5); \
+    done || echo "Warning: dependency:go-offline failed, will download during build"
 
 # Copy source code
 # When building from project root: backend/src
