@@ -29,6 +29,19 @@ body {
   gap: 24px;
 }
 
+/* Prevent logo from being selected or copied */
+.sidebar img {
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  pointer-events: none;
+  -webkit-user-drag: none;
+  -khtml-user-drag: none;
+  -moz-user-drag: none;
+  -o-user-drag: none;
+}
+
 .menu-title {
   font-size: 26px;
   font-weight: 600;
@@ -100,6 +113,38 @@ body {
   margin-bottom: 0;
   font-size: 16px;
   opacity: 0.9;
+}
+
+/* Horizontal Navigation Menu */
+.horizontal-nav {
+  display: flex;
+  gap: 12px;
+  margin-top: 20px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.nav-button {
+  background: transparent;
+  border: none;
+  padding: 10px 20px;
+  font-size: 16px;
+  color: #66e3e3;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+
+.nav-button:hover {
+  color: #00ffc3;
+  background: rgba(0, 191, 166, 0.1);
+}
+
+.nav-button.active {
+  background: #009688;
+  color: #ffffff;
+  font-weight: 600;
 }
 
 /* Generic section card */
