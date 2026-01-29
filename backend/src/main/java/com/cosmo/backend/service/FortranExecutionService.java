@@ -1,6 +1,8 @@
 package com.cosmo.backend.service;
 
 import com.cosmo.backend.dto.InitialConditionsDTO;
+import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,11 +41,28 @@ public class FortranExecutionService {
      */
     private static final long MAX_EXECUTION_TIME = 1200;
     
+    /** Fortran compiler command (ifx or gfortran). Default ifx for Docker and local. */
+    @Value("${cosmo.fortran.compiler:ifx}")
+    private String fortranCompiler;
+    
+    /** Compiled executable name without path (e.g. multifix or multifix.exe). Configurable via cosmo.fortran.exe-name or COSMO_FORTRAN_EXE_NAME. */
+    @Value("${cosmo.fortran.exe-name:multifix}")
+    private String fortranExeName;
+    
     /**
      * Map to track running processes by execution ID
      * Used for cancellation support
      */
     private final Map<String, Process> runningProcesses = new ConcurrentHashMap<>();
+
+    /** Log which Fortran compiler will be used (so you know ifx vs gfortran). */
+    @PostConstruct
+    public void logFortranCompiler() {
+        String emoji = "ifx".equalsIgnoreCase(fortranCompiler) ? "🔷" : "🟢";
+        String which = "ifx".equalsIgnoreCase(fortranCompiler) ? "Intel ifx" : "GNU gfortran";
+        logger.info("{} Fortran compiler: {} ({}) — set COSMO_FORTRAN_COMPILER to switch; executable: {}",
+            emoji, fortranCompiler, which, fortranExeName);
+    }
     
     /**
      * Get the absolute path to the fortran directory
@@ -688,47 +707,18 @@ public class FortranExecutionService {
     }
     
     /**
-     * Compile the Fortran program multifix.f
-     * 
-     * @param fortranDir The directory containing multifix.f
-     * @param numFields Number of fields (used to prepare source with correct nf)
-     * @return Path to the compiled executable
-     * @throws IOException If compilation fails
-     * @throws InterruptedException If compilation is interrupted
+     * Run a single compilation attempt with the given compiler.
+     * @return compilation output (stdout+stderr) for logging
      */
-    private Path compileFortranProgram(Path fortranDir, int numFields) throws IOException, InterruptedException {
-        // First, prepare the source file with correct nf value
-        Path sourceFile = prepareMultifixSource(fortranDir, numFields);
-        Path executable = fortranDir.resolve("multifix.exe");
-        
-        // Delete old executable to ensure fresh compilation
-        if (Files.exists(executable)) {
-            try {
-                Files.delete(executable);
-                logger.info("🗑️  Deleted old executable to ensure fresh compilation: {}", executable.getFileName());
-            } catch (IOException e) {
-                logger.warn("Could not delete old executable {}: {}", executable, e.getMessage());
-            }
-        }
-        
-        logger.info("Compiling Fortran program: {} -> {}", sourceFile, executable);
-        
-        // Build compilation command
-        // gfortran is the GNU Fortran compiler
-        // -o specifies output executable name
+    private String runCompilation(Path fortranDir, Path sourceFile, Path executable, String compiler) throws IOException, InterruptedException {
         ProcessBuilder compileBuilder = new ProcessBuilder(
-            "gfortran",
+            compiler,
             "-o", executable.toString(),
             sourceFile.toString()
         );
-        
         compileBuilder.directory(fortranDir.toFile());
         compileBuilder.redirectErrorStream(true);
-        
-        logger.info("Running: gfortran -o {} {}", executable, sourceFile);
         Process compileProcess = compileBuilder.start();
-        
-        // Read compilation output
         StringBuilder compileOutput = new StringBuilder();
         try (BufferedReader reader = new BufferedReader(
                 new InputStreamReader(compileProcess.getInputStream()))) {
@@ -738,23 +728,62 @@ public class FortranExecutionService {
                 logger.debug("Compilation output: {}", line);
             }
         }
-        
-        // Wait for compilation to finish
         int exitCode = compileProcess.waitFor();
-        
         if (exitCode != 0) {
-            String errorMsg = "Fortran compilation failed with exit code " + exitCode + 
-                "\nCompilation output:\n" + compileOutput.toString();
-            logger.error(errorMsg);
-            throw new IOException(errorMsg);
+            throw new IOException("Fortran compilation failed with exit code " + exitCode +
+                "\nCompilation output:\n" + compileOutput.toString());
         }
-        
-        // Check if executable was created
+        return compileOutput.toString();
+    }
+
+    /**
+     * Compile the Fortran program multifix.f.
+     * If the configured compiler is ifx and it fails (e.g. missing gcc/oneAPI), falls back to gfortran and logs it.
+     *
+     * @param fortranDir The directory containing multifix.f
+     * @param numFields Number of fields (used to prepare source with correct nf)
+     * @return Path to the compiled executable
+     * @throws IOException If compilation fails (and fallback did not apply or also failed)
+     * @throws InterruptedException If compilation is interrupted
+     */
+    private Path compileFortranProgram(Path fortranDir, int numFields) throws IOException, InterruptedException {
+        Path sourceFile = prepareMultifixSource(fortranDir, numFields);
+        Path executable = fortranDir.resolve(fortranExeName);
+
+        if (Files.exists(executable)) {
+            try {
+                Files.delete(executable);
+                logger.info("🗑️  Deleted old executable to ensure fresh compilation: {}", executable.getFileName());
+            } catch (IOException e) {
+                logger.warn("Could not delete old executable {}: {}", executable, e.getMessage());
+            }
+        }
+
+        String compilerToUse = fortranCompiler;
+        long compileStart = System.currentTimeMillis();
+
+        logger.info("Compiling Fortran program: {} -> {} (compiler: {})", sourceFile.getFileName(), executable.getFileName(), compilerToUse);
+        logger.info("Running: {} -o {} {}", compilerToUse, executable, sourceFile);
+
+        try {
+            runCompilation(fortranDir, sourceFile, executable, compilerToUse);
+        } catch (IOException e) {
+            if ("ifx".equalsIgnoreCase(fortranCompiler)) {
+                logger.warn("ifx compilation failed (e.g. Intel oneAPI/gcc not set up). Falling back to gfortran. Error: {}", e.getMessage());
+                logger.info("Using gfortran for this compilation (fallback).");
+                compilerToUse = "gfortran";
+                runCompilation(fortranDir, sourceFile, executable, compilerToUse);
+            } else {
+                throw e;
+            }
+        }
+
         if (!Files.exists(executable)) {
             throw new IOException("Compilation succeeded but executable not found: " + executable);
         }
-        
-        logger.info("Fortran compilation successful! Executable: {}", executable);
+
+        double compileSec = (System.currentTimeMillis() - compileStart) / 1000.0;
+        logger.info("Fortran compilation successful in {}s (compiler: {}). Executable: {}", String.format("%.1f", compileSec), compilerToUse, executable);
         return executable;
     }
     
@@ -885,7 +914,7 @@ public class FortranExecutionService {
             try {
                 // Read output from the Fortran program
                 logger.info("========================================");
-                logger.info("Fortran program output (multifix.exe):");
+                logger.info("Fortran program output ({}):", fortranExeName);
                 logger.info("========================================");
                 StringBuilder output = new StringBuilder();
                 try (BufferedReader reader = new BufferedReader(
@@ -898,7 +927,7 @@ public class FortranExecutionService {
                         }
                         output.append(line).append("\n");
                         // Log at INFO level so developers can see the output in terminal
-                        logger.info("multifix.exe: {}", line);
+                        logger.info("{}: {}", fortranExeName, line);
                     }
                 }
                 logger.info("========================================");
@@ -967,6 +996,8 @@ public class FortranExecutionService {
                 }
                 
                 if (exitCode == 0) {
+                    double totalSec = (System.currentTimeMillis() - executionStartTime) / 1000.0;
+                    logger.info("Fortran execution total: {}s (compile + run)", String.format("%.1f", totalSec));
                     String successMessage = String.format(
                         "Calculation completed successfully! Generated %d output file(s). Execution ID: %s",
                         outputFiles.size(),
@@ -981,6 +1012,8 @@ public class FortranExecutionService {
                         outputFiles
                     );
                 } else {
+                    double totalSec = (System.currentTimeMillis() - executionStartTime) / 1000.0;
+                    logger.info("Fortran execution total: {}s (compile + run) before exit code {}", String.format("%.1f", totalSec), exitCode);
                     String errorMsg = "Fortran program exited with error code " + exitCode + ". Check output for details.";
                     logger.error("❌ {}", errorMsg);
                     return new FortranExecutionResult(

@@ -74,6 +74,10 @@ public class CosmoController {
         
         //try/catch = protect the endpoint so the backend doesnt crash if something goes wrong
         try {
+            if (initialConditions == null) {
+                logger.warn("Validation failed: request body (initial conditions) is null");
+                return ResponseEntity.badRequest().build();
+            }
             // Validate input --> check if the input is valid
             if (initialConditions.getFieldValues() == null || 
                 initialConditions.getFieldValues().isEmpty()) {
@@ -304,7 +308,7 @@ public class CosmoController {
                 response.append("Size: ").append(java.nio.file.Files.size(executable)).append(" bytes\n");
             } else {
                 response.append("ERROR: Executable not found!\n");
-                response.append("Please compile: cd spare && gfortran gravitationalwaves.f -o m.exe\n");
+                response.append("Please compile: cd fortran && ifx multifix.f -o multifix (or gfortran -o multifix multifix.f)\n");
             }
             
             return ResponseEntity.ok(response.toString());

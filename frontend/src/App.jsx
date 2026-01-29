@@ -327,7 +327,14 @@ function App() {
       }
       
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        let errMessage = `HTTP error! status: ${response.status}`;
+        try {
+          const errBody = await response.json();
+          if (errBody && (errBody.message || errBody.error)) {
+            errMessage = errBody.message || errBody.error;
+          }
+        } catch (_) { /* ignore */ }
+        throw new Error(errMessage);
       }
       
       // Get execution ID from response (new async format)
@@ -1762,7 +1769,7 @@ function App() {
               </div>
             )}
             <p className="hint-text">
-              Right now it works  without change of metric. For more fields, the code maybe be crash because of server limitations.
+              For more fields or complex metrics, the code maybe be crash because of server limitations.
               Later these issues will be fixed. 
             </p>
           </section>

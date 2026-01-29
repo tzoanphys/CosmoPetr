@@ -1,5 +1,7 @@
 package com.cosmo.backend.dto;
 
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+
 import java.util.List;
 import java.util.Map;
 
@@ -41,8 +43,8 @@ public class InitialConditionsDTO {
 
     // Metric matrix as expressions: List of Lists representing n×n metric matrix
     // Each entry is either a number (e.g., "1", "0.5") or a function of fields (e.g., "x(1)**2")
-    // For 1 field: [["1"]] (single value)
-    // For n fields: n×n matrix
+    // Accepts both string and number in JSON to avoid 500 when frontend sends numbers.
+    @JsonDeserialize(using = MetricMatrixDeserializer.class)
     private List<List<String>> metric;
 
     //Constructors
