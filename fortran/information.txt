@@ -1,3 +1,3 @@
-  N_End of Inflation:   68.299999999999997
+  N_End of Inflation:   67.700000000000003
             C_q used:                100.0
           P_R (peak): ********************

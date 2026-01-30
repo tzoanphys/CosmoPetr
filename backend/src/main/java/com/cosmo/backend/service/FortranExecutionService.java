@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -102,6 +103,36 @@ public class FortranExecutionService {
         return possiblePaths.get(0);
     }
     
+    /**
+     * Build Map&lt;String, Double&gt; from the "parameters" array [{name, value}, ...].
+     * Value can be string or number in JSON.
+     */
+    private Map<String, Double> buildParameterValuesFromArray(List<Map<String, Object>> parameters) {
+        if (parameters == null || parameters.isEmpty()) {
+            return null;
+        }
+        Map<String, Double> result = new HashMap<>();
+        for (Map<String, Object> entry : parameters) {
+            Object nameObj = entry != null ? entry.get("name") : null;
+            Object valueObj = entry != null ? entry.get("value") : null;
+            if (nameObj == null || valueObj == null) continue;
+            String name = nameObj.toString().trim();
+            if (name.isEmpty()) continue;
+            double val;
+            if (valueObj instanceof Number) {
+                val = ((Number) valueObj).doubleValue();
+            } else {
+                try {
+                    val = Double.parseDouble(valueObj.toString().trim());
+                } catch (NumberFormatException e) {
+                    continue;
+                }
+            }
+            result.put(name, val);
+        }
+        return result.isEmpty() ? null : result;
+    }
+
     /**
      * Replace parameter symbols in expression with their values
      * Handles case-insensitive matching (e.g., "A" in map matches "a" in expression)
@@ -430,6 +461,8 @@ public class FortranExecutionService {
         logger.info("Writing metric to: {}", metricIncFile);
         
         try (BufferedWriter writer = Files.newBufferedWriter(metricIncFile)) {
+            writer.write("      ! metric.inc (overwritten each run - metric_matrix defaults)");
+            writer.newLine();
             List<List<String>> metric = conditions.getMetric();
             int numFields = conditions.getFieldValues() != null ? 
                 conditions.getFieldValues().size() : 1;
@@ -476,6 +509,7 @@ public class FortranExecutionService {
     /**
      * Write metric_function.inc used inside the Fortran function lll(i,j,x).
      * Each entry can be a constant or an expression depending on x(1..nf).
+     * Writes ALL (i,j) entries so the file is complete; missing entries get identity default (1 on diagonal, 0 off).
      */
     private void writeMetricFunctionInc(Path fortranDir, InitialConditionsDTO conditions) throws IOException {
         Path metricFuncIncFile = fortranDir.resolve("metric_function.inc");
@@ -486,16 +520,10 @@ public class FortranExecutionService {
             conditions.getFieldValues().size() : 1;
 
         try (BufferedWriter writer = Files.newBufferedWriter(metricFuncIncFile)) {
-            // If no metric provided, keep defaults (lll already set to metric_matrix(i,j))
-            if (metric == null || metric.isEmpty()) {
-                writer.write("      ! No functional metric provided; using metric_matrix(i,j)");
-                writer.newLine();
-                writer.newLine();
-                logger.info("✅Successfully wrote metric_function.inc (default only)");
-                return;
-            }
+            writer.write("      ! metric_function.inc (overwritten each run - lll(i,j,x) entries)");
+            writer.newLine();
 
-            // Build nested ifs: if(i==1) then if(j==1) then lll=... endif ... endif
+            // Build nested ifs for ALL (i,j) so both metric.inc and metric_function.inc are consistent
             for (int i = 0; i < numFields; i++) {
                 if (i == 0) {
                     writer.write("      if (i.eq." + (i + 1) + ") then");
@@ -504,27 +532,24 @@ public class FortranExecutionService {
                 }
                 writer.newLine();
 
-                // Determine row size safely
-                List<String> row = (i < metric.size()) ? metric.get(i) : null;
+                List<String> row = (metric != null && i < metric.size()) ? metric.get(i) : null;
 
                 boolean wroteAnyJ = false;
                 for (int j = 0; j < numFields; j++) {
-                    String expr = null;
-                    if (row != null && j < row.size()) {
-                        expr = row.get(j);
-                    }
-
-                    // Missing/blank => skip (will keep default lll=metric_matrix(i,j))
-                    if (expr == null || expr.trim().isEmpty()) {
-                        continue;
-                    }
+                    String expr = (row != null && j < row.size()) ? row.get(j) : null;
+                    if (expr != null) expr = expr.trim();
+                    boolean blank = (expr == null || expr.isEmpty());
 
                     String fortranExpr;
-                    Double parsed = tryParseDouble(expr);
-                    if (parsed != null) {
-                        fortranExpr = String.format("%.15f", parsed) + "d0";
+                    if (blank) {
+                        fortranExpr = (i == j) ? "1.000000000000000d0" : "0.000000000000000d0";
                     } else {
-                        fortranExpr = transformMetricExpressionToFortran(expr);
+                        Double parsed = tryParseDouble(expr);
+                        if (parsed != null) {
+                            fortranExpr = String.format("%.15f", parsed) + "d0";
+                        } else {
+                            fortranExpr = transformMetricExpressionToFortran(expr);
+                        }
                     }
 
                     if (!wroteAnyJ) {
@@ -537,7 +562,6 @@ public class FortranExecutionService {
                     writer.write("        lll=" + fortranExpr);
                     writer.newLine();
                 }
-
                 if (wroteAnyJ) {
                     writer.write("       endif");
                     writer.newLine();
@@ -572,6 +596,9 @@ public class FortranExecutionService {
     private String transformMetricExpressionToFortran(String expression) {
         String expr = expression == null ? "" : expression.trim();
         if (expr.isEmpty()) return "0.d0";
+
+        // Fortran double-precision exp: exp( -> dexp( to match multi.f
+        expr = expr.replaceAll("(?i)\\bexp\\s*\\(", "dexp(");
 
         // Protect array indices like x(1)
         Pattern arrayIndexPattern = Pattern.compile("x\\((\\d+)\\)");
@@ -857,9 +884,15 @@ public class FortranExecutionService {
             // Step 2: Replace parameters in potential expression
             String potentialExpression = initialConditions.getPotentialExpression();
             Map<String, Double> parameterValues = initialConditions.getParameterValues();
-            
+            // Fallback: build parameterValues from "parameters" array if map is empty (e.g. JSON key mismatch)
+            if ((parameterValues == null || parameterValues.isEmpty()) && initialConditions.getParameters() != null) {
+                parameterValues = buildParameterValuesFromArray(initialConditions.getParameters());
+                if (parameterValues != null && !parameterValues.isEmpty()) {
+                    logger.info("Built parameterValues from parameters array: {}", parameterValues);
+                }
+            }
             if (parameterValues != null && !parameterValues.isEmpty()) {
-                logger.info("Replacing parameters in potential expression...");
+                logger.info("Replacing parameters in potential expression. parameterValues={}", parameterValues);
                 potentialExpression = replaceParameters(potentialExpression, parameterValues);
                 logger.info("Potential expression after parameter replacement: {}", potentialExpression);
             }

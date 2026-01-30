@@ -1,3 +1,4 @@
+      ! metric_function.inc (overwritten each run - lll(i,j,x) entries)
       if (i.eq.1) then
        if (j.eq.1) then
         lll=1.000000000000000d0
@@ -8,7 +9,7 @@
        if (j.eq.1) then
         lll=0.000000000000000d0
        else if (j.eq.2) then
-        lll=Exp(16.d0*x(1))
+        lll=dexp(16.d0*x(1))
        endif
       endif
 

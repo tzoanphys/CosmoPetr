@@ -169,6 +169,7 @@ function App() {
     const copy = [...parameters];
     copy[index] = { ...copy[index], name: newName };
     setParameters(copy);
+    parametersRef.current = copy; // sync ref so Run sees latest before re-render
   }
 
   // ----------------------------------------------------
@@ -180,6 +181,7 @@ function App() {
     // Allow empty values - don't force "0"
     copy[index] = { ...copy[index], value: newValue };
     setParameters(copy);
+    parametersRef.current = copy; // sync ref so Run sees latest value before re-render
   }
 
   // ----------------------------------------------------
@@ -204,6 +206,13 @@ function App() {
   const [abortController, setAbortController] = useState(null);
   const isCancelledRef = useRef(false);
   const pendingExecutionIdRef = useRef(null);
+  // Ref holding latest parameters so Run uses current values even if state hasn't re-rendered yet
+  const parametersRef = useRef([]);
+
+  // Keep parametersRef in sync with parameters (e.g. when numParameters changes)
+  useEffect(() => {
+    parametersRef.current = parameters;
+  }, [parameters]);
 
   // ----------------------------------------------------
   // Prevent logo from being copied to clipboard
@@ -270,16 +279,17 @@ function App() {
     const tempExecutionId = `pending_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     pendingExecutionIdRef.current = tempExecutionId;
     
-    // Prepare parameters object from the parameters array
-    // Only include parameters with valid names and numeric values
+    // Prepare parameters object from the parameters array (use ref so we have latest values even if state hasn't re-rendered)
+    // Send values as strings so JSON/backend never lose small decimals (e.g. 0.002)
+    const paramsToSend = parametersRef.current ?? parameters;
     const parametersObj = {};
-    parameters.forEach(param => {
+    paramsToSend.forEach(param => {
       if (param.name && param.name.trim() !== "") {
         const valueStr = param.value ? param.value.trim() : "";
         if (valueStr !== "") {
-          const value = parseFloat(valueStr);
-          if (!isNaN(value)) {
-            parametersObj[param.name] = value;
+          const num = parseFloat(valueStr);
+          if (!isNaN(num)) {
+            parametersObj[param.name] = valueStr;
           }
         }
       }
@@ -307,6 +317,7 @@ function App() {
       ],
       potentialExpression: potential || "",
       parameterValues: parametersObj,
+      parameters: paramsToSend,
       numParameters: numParameters,
       metric: metric
     };

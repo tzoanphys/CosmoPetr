@@ -36,7 +36,11 @@ public class InitialConditionsDTO {
     private List<Double> potentialParameters;
 
     //Parameter values mapped by name (e.g., {"m": 0.1, "lambda": 0.5})
+    @JsonDeserialize(using = ParameterValuesDeserializer.class)
     private Map<String, Double> parameterValues;
+
+    // Optional: parameters as array [{name, value}, ...] - used as fallback when parameterValues is empty
+    private List<Map<String, Object>> parameters;
 
     //Potential expression
     private String potentialExpression;
@@ -138,6 +142,14 @@ public class InitialConditionsDTO {
 
     public void setParameterValues(Map<String, Double> parameterValues) {
         this.parameterValues = parameterValues;
+    }
+
+    public List<Map<String, Object>> getParameters() {
+        return parameters;
+    }
+
+    public void setParameters(List<Map<String, Object>> parameters) {
+        this.parameters = parameters;
     }
 
     public List<List<String>> getMetric() {
