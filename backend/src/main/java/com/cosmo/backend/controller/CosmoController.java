@@ -485,6 +485,26 @@ public class CosmoController {
                 }
             }
             
+            // Skip if it's scientific notation: 2.2e-12, 10.e-11, 2.2d-12 etc.
+            if ("e".equals(identifier) || "d".equals(identifier)) {
+                boolean digitOrDotBefore = start > 0 && (Character.isDigit(expression.charAt(start - 1)) || expression.charAt(start - 1) == '.');
+                int end = matcher.end();
+                boolean signAndDigitsAfter = false;
+                if (end < expression.length()) {
+                    int pos = end;
+                    if (expression.charAt(pos) == '+' || expression.charAt(pos) == '-') {
+                        pos++;
+                        while (pos < expression.length() && Character.isDigit(expression.charAt(pos))) {
+                            pos++;
+                        }
+                        signAndDigitsAfter = pos > end;
+                    }
+                }
+                if (digitOrDotBefore && signAndDigitsAfter) {
+                    continue;
+                }
+            }
+            
             parameters.add(identifier);
         }
         

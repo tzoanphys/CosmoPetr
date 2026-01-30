@@ -566,7 +566,7 @@ function App() {
       <aside className="sidebar">
         <div style={{ textAlign: "center", marginBottom: "20px" }}>
           <img 
-            src="/unnamed1.jpg" 
+            src="/unnamed2.jpg" 
             alt="Eagle Logo" 
             style={{
               width: "100px",

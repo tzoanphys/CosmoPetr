@@ -216,7 +216,22 @@ public class FortranExecutionService {
         arrayMatcher.appendTail(protectedBuffer);
         transformed = protectedBuffer.toString();
         
-        // Now transform numbers (array indices are protected)
+        // Protect scientific notation (e.g. 2.2e-12, 10.e-11) before adding .d0 to other numbers.
+        // Convert to Fortran double form: mantissa + "d" + exponent (e.g. 2.2e-12 -> 2.2d-12).
+        Pattern sciNotationPattern = Pattern.compile("(-?\\d+\\.?\\d*)[eE]([+-]?\\d+)");
+        Matcher sciMatcher = sciNotationPattern.matcher(transformed);
+        List<String> sciNotationReplacements = new ArrayList<>();
+        StringBuffer sciBuffer = new StringBuffer();
+        while (sciMatcher.find()) {
+            String mantissa = sciMatcher.group(1);
+            String exponent = sciMatcher.group(2);
+            sciNotationReplacements.add(mantissa + "d" + exponent);
+            sciMatcher.appendReplacement(sciBuffer, Matcher.quoteReplacement("___SCINOT_" + (sciNotationReplacements.size() - 1) + "___"));
+        }
+        sciMatcher.appendTail(sciBuffer);
+        transformed = sciBuffer.toString();
+        
+        // Now transform numbers (array indices and scientific notation are protected)
         // Pattern to match numbers that need .d0 suffix
         // Matches: optional negative sign, digits, optional decimal point and digits
         // Excludes: numbers already ending with d0, d1, etc. (like 6.d0)
@@ -239,6 +254,11 @@ public class FortranExecutionService {
         }
         matcher.appendTail(sb);
         transformed = sb.toString();
+        
+        // Restore scientific notation (Fortran double form: 2.2d-12, etc.)
+        for (int i = 0; i < sciNotationReplacements.size(); i++) {
+            transformed = transformed.replace("___SCINOT_" + i + "___", sciNotationReplacements.get(i));
+        }
         
         // Restore array indices (they should remain as x(1), x(2), etc.)
         for (int i = 0; i < arrayIndices.size(); i++) {

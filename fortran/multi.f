@@ -67,7 +67,7 @@
       real*8 prk_min(timestep), ks_norm_min,norma_p,norma_m
       parameter(t0=0,dt=0.01D0,kstar=0.05d0,
      +dpr=0.0001,cq=100.d0,dc=0.45d0!0.00000000001
-     +,k_step=2,epsi=1.d-5)
+     +,k_step=100,epsi=1.d-5)
       !real*8 pot(200),yy
       real*8 pi,opbh_ps,mpeak_ps,ppeak
       real*8 opbh_pt,mpeak_pt,ppeak_pt
@@ -241,8 +241,8 @@
 !      write(*,*) t(j), x(1)!,x(2) 
        write(88,*) t(j), varepsilon(j),hta(j)   
 
-       !if (varepsilon(j).gt.2.2) exit
-       if (varepsilon(j).gt.1.0) exit
+      if (varepsilon(j).gt.2.2) exit
+       !if (varepsilon(j).gt.1.0) exit
       enddo
       timestep2=j-1
       print*, "N_End of Inflation=",timestep2*dt
